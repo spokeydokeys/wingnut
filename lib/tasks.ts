@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createClient } from "./supabase/server";
-import { toDateInputValue } from "./time";
+import { formatDate, toDateInputValue } from "./time";
 import type { Database } from "./database.types";
 
 export type Task = Database["public"]["Tables"]["task"]["Row"];
@@ -88,6 +88,17 @@ export async function getSettledTasks(limit = 12): Promise<TaskWithNames[]> {
   return withNames(data ?? [], names);
 }
 
+/** One task, for the screen that changes it. */
+export async function getTask(taskId: string): Promise<TaskWithNames | null> {
+  const supabase = await createClient();
+  const [{ data }, names] = await Promise.all([
+    supabase.from("task").select("*").eq("id", taskId).maybeSingle(),
+    nameMap(),
+  ]);
+  if (!data) return null;
+  return withNames([data], names)[0];
+}
+
 /** A recurring chore, with whose turn is next and who is in the rotation. */
 export type SeriesWithRotation = TaskSeries & {
   next_name: string | null;
@@ -146,7 +157,7 @@ export function describeDue(dueDate: string | null): {
   if (!dueDate) return { text: "No date", overdue: false };
 
   const today = toDateInputValue();
-  if (dueDate > today) return { text: `Due ${formatShortDate(dueDate)}`, overdue: false };
+  if (dueDate > today) return { text: `Due ${formatDate(dueDate)}`, overdue: false };
   if (dueDate === today) return { text: "Due today", overdue: false };
 
   const days = daysBetween(dueDate, today);
@@ -154,16 +165,6 @@ export function describeDue(dueDate: string | null): {
     text: days === 1 ? "1 day overdue" : `${days} days overdue`,
     overdue: true,
   };
-}
-
-/** `10 Nov`, from a plain date and without going near a time zone. */
-function formatShortDate(isoDate: string): string {
-  const [y, m, d] = isoDate.split("-").map(Number);
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone: "UTC",
-    day: "numeric",
-    month: "short",
-  }).format(new Date(Date.UTC(y, m - 1, d)));
 }
 
 /** Whole days between two `YYYY-MM-DD`s, read as UTC so neither has a zone. */

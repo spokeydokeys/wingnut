@@ -30,6 +30,31 @@ export default async function More() {
         </div>
 
         <Link
+          href="/tasks"
+          className="flex items-center justify-between rounded-[14px] border border-line bg-surface p-3.5"
+        >
+          <span>
+            <span className="block text-base font-semibold">Tasks and chores</span>
+            <span className="block text-[13px] text-muted">
+              Whose turn the admin is, and what is still outstanding
+            </span>
+          </span>
+          <svg
+            aria-hidden="true"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M9 5l7 7-7 7" />
+          </svg>
+        </Link>
+
+        <Link
           href="/more/places"
           className="flex items-center justify-between rounded-[14px] border border-line bg-surface p-3.5"
         >

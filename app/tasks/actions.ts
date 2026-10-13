@@ -85,26 +85,27 @@ export async function cancelTask(taskId: string) {
   revalidateTasks();
 }
 
-/** Hands a chore to somebody else, or to nobody. */
-export async function reassignTask(
-  _prev: Failed | null,
-  form: FormData,
-): Promise<Failed | never> {
+/**
+ * Hands a chore to somebody else, or to nobody.
+ *
+ * Throws rather than returning a complaint, because the only thing it can
+ * object to is an id that is not a uuid, and the only control that calls it is
+ * a `<select>` the server rendered from the roster.
+ */
+export async function reassignTask(taskId: string, form: FormData) {
   await requireMember();
 
-  const id = String(form.get("id") ?? "");
   const assignee = String(form.get("assignee_member_id") ?? "");
   if (assignee !== "" && !UUID.test(assignee)) {
-    return { error: "That person could not be read." };
+    throw new Error("That person could not be read.");
   }
 
   const supabase = await createClient();
   const { error } = await supabase
     .from("task")
     .update({ assignee_member_id: assignee === "" ? null : assignee })
-    .eq("id", id);
-
-  if (error) return { error: error.message };
+    .eq("id", taskId);
+  if (error) throw error;
 
   revalidateTasks();
   redirect("/tasks");
