@@ -551,6 +551,70 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"task": {
+                  Row: {
+                    "assignee_member_id": string | null,"company_id": string,"completed_at": string | null,"completed_by": string | null,"created_at": string,"created_by": string | null,"detail": string | null,"due_date": string | null,"id": string,"period_month": string | null,"series_id": string | null,"status": Database["public"]['Enums']["task_status"],"title": string,"updated_at": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "assignee_member_id"?: string | null,"company_id": string,"completed_at"?: string | null,"completed_by"?: string | null,"created_at"?: string,"created_by"?: string | null,"detail"?: string | null,"due_date"?: string | null,"id"?: string,"period_month"?: string | null,"series_id"?: string | null,"status"?: Database["public"]['Enums']["task_status"],"title": string,"updated_at"?: string
+                  }
+                  Update: {
+                    "assignee_member_id"?: string | null,"company_id"?: string,"completed_at"?: string | null,"completed_by"?: string | null,"created_at"?: string,"created_by"?: string | null,"detail"?: string | null,"due_date"?: string | null,"id"?: string,"period_month"?: string | null,"series_id"?: string | null,"status"?: Database["public"]['Enums']["task_status"],"title"?: string,"updated_at"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "task_assignee_member_id_fkey"
+      columns: ["assignee_member_id"]
+isOneToOne: false
+      referencedRelation: "member"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "task_company_id_fkey"
+      columns: ["company_id"]
+isOneToOne: false
+      referencedRelation: "company"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "task_completed_by_fkey"
+      columns: ["completed_by"]
+isOneToOne: false
+      referencedRelation: "member"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "task_created_by_fkey"
+      columns: ["created_by"]
+isOneToOne: false
+      referencedRelation: "member"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "task_series_id_fkey"
+      columns: ["series_id"]
+isOneToOne: false
+      referencedRelation: "task_series"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"task_series": {
+                  Row: {
+                    "admins_only": boolean,"company_id": string,"created_at": string,"detail": string | null,"due_offset_days": number,"id": string,"interval_days": number | null,"is_active": boolean,"recurrence": Database["public"]['Enums']["task_recurrence"],"title": string,"updated_at": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "admins_only"?: boolean,"company_id": string,"created_at"?: string,"detail"?: string | null,"due_offset_days"?: number,"id"?: string,"interval_days"?: number | null,"is_active"?: boolean,"recurrence": Database["public"]['Enums']["task_recurrence"],"title": string,"updated_at"?: string
+                  }
+                  Update: {
+                    "admins_only"?: boolean,"company_id"?: string,"created_at"?: string,"detail"?: string | null,"due_offset_days"?: number,"id"?: string,"interval_days"?: number | null,"is_active"?: boolean,"recurrence"?: Database["public"]['Enums']["task_recurrence"],"title"?: string,"updated_at"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "task_series_company_id_fkey"
+      columns: ["company_id"]
+isOneToOne: false
+      referencedRelation: "company"
+      referencedColumns: ["id"]
+    }
+                  ]
                 }
           }
           Views: {
@@ -696,6 +760,9 @@ isOneToOne: false
 "issue_invoice":
 { Args: { "p_invoice_id": string }; Returns: number
                            },
+"journey_sentence":
+{ Args: { "p_dest_name": string,"p_origin_name": string,"p_same_place": boolean }; Returns: string
+                           },
 "journey_text_for":
 { Args: { "p_dest_id": string,"p_origin_id": string }; Returns: string
                            },
@@ -750,6 +817,17 @@ isOneToOne: false
                            },
 "round_hours":
 { Args: { "p_hours": number,"p_rule": Database["public"]['Enums']["hour_rounding"] }; Returns: number
+                           },
+"task_next_assignee":
+{ Args: { "p_series_id": string }; Returns: string
+                           },
+"task_rotation":
+{ Args: { "p_series_id": string }; Returns: {
+              "member_id": string,"turn": number
+            }[]
+                           },
+"task_spawn_for_month":
+{ Args: { "p_company_id": string,"p_month": string }; Returns: number
                            },
 "timer_start":
 { Args: { "p_accuracy_m"?: number,"p_aircraft_id"?: string,"p_idempotency_key"?: string,"p_lat"?: number,"p_lon"?: number,"p_token_hash": string }; Returns: {
@@ -824,7 +902,7 @@ isOneToOne: false
                            }
           }
           Enums: {
-            "billing_basis": "flight_time"|"tach","expense_approval_rule": "any_other_owner"|"admin_only","fix_source": "gps"|"manual","fix_which": "start"|"end","fixed_cost_split": "ownership_pct"|"equal"|"hours_flown","flight_status": "draft"|"confirmed"|"billed","gl_account_type": "asset"|"liability"|"equity"|"revenue"|"expense","hour_rounding": "round_up_tenth"|"nearest_tenth"|"exact","invoice_status": "draft"|"issued"|"settled"|"void","ledger_entry_kind": "flight_charge"|"hangarage"|"insurance"|"expense_credit"|"payment"|"payout"|"adjustment","maintenance_basis": "tach"|"calendar","maintenance_kind": "life_limit"|"recurring_inspection"|"recurring_task","member_role": "pilot"|"admin","place_kind": "airport"|"water_aerodrome"|"heliport"|"bay"|"lake"|"dock"|"other","place_source": "ourairports"|"osm"|"bcgnis"|"saved","rate_component_kind": "fuel"|"reserve"|"operating","snag_status": "open"|"watch"|"cleared","tach_reading_source": "manual"|"flight","tax_treatment": "taxable"|"zero_rated"|"exempt"|"out_of_scope"
+            "billing_basis": "flight_time"|"tach","expense_approval_rule": "any_other_owner"|"admin_only","fix_source": "gps"|"manual","fix_which": "start"|"end","fixed_cost_split": "ownership_pct"|"equal"|"hours_flown","flight_status": "draft"|"confirmed"|"billed","gl_account_type": "asset"|"liability"|"equity"|"revenue"|"expense","hour_rounding": "round_up_tenth"|"nearest_tenth"|"exact","invoice_status": "draft"|"issued"|"settled"|"void","ledger_entry_kind": "flight_charge"|"hangarage"|"insurance"|"expense_credit"|"payment"|"payout"|"adjustment","maintenance_basis": "tach"|"calendar","maintenance_kind": "life_limit"|"recurring_inspection"|"recurring_task","member_role": "pilot"|"admin","place_kind": "airport"|"water_aerodrome"|"heliport"|"bay"|"lake"|"dock"|"other","place_source": "ourairports"|"osm"|"bcgnis"|"saved","rate_component_kind": "fuel"|"reserve"|"operating","snag_status": "open"|"watch"|"cleared","tach_reading_source": "manual"|"flight","task_recurrence": "month_close"|"interval_days","task_status": "open"|"done"|"cancelled","tax_treatment": "taxable"|"zero_rated"|"exempt"|"out_of_scope"
           }
           CompositeTypes: {
             [_ in never]: never
@@ -940,7 +1018,7 @@ export type CompositeTypes<
 export const Constants = {
   "public": {
           Enums: {
-            "billing_basis": ["flight_time", "tach"],"expense_approval_rule": ["any_other_owner", "admin_only"],"fix_source": ["gps", "manual"],"fix_which": ["start", "end"],"fixed_cost_split": ["ownership_pct", "equal", "hours_flown"],"flight_status": ["draft", "confirmed", "billed"],"gl_account_type": ["asset", "liability", "equity", "revenue", "expense"],"hour_rounding": ["round_up_tenth", "nearest_tenth", "exact"],"invoice_status": ["draft", "issued", "settled", "void"],"ledger_entry_kind": ["flight_charge", "hangarage", "insurance", "expense_credit", "payment", "payout", "adjustment"],"maintenance_basis": ["tach", "calendar"],"maintenance_kind": ["life_limit", "recurring_inspection", "recurring_task"],"member_role": ["pilot", "admin"],"place_kind": ["airport", "water_aerodrome", "heliport", "bay", "lake", "dock", "other"],"place_source": ["ourairports", "osm", "bcgnis", "saved"],"rate_component_kind": ["fuel", "reserve", "operating"],"snag_status": ["open", "watch", "cleared"],"tach_reading_source": ["manual", "flight"],"tax_treatment": ["taxable", "zero_rated", "exempt", "out_of_scope"]
+            "billing_basis": ["flight_time", "tach"],"expense_approval_rule": ["any_other_owner", "admin_only"],"fix_source": ["gps", "manual"],"fix_which": ["start", "end"],"fixed_cost_split": ["ownership_pct", "equal", "hours_flown"],"flight_status": ["draft", "confirmed", "billed"],"gl_account_type": ["asset", "liability", "equity", "revenue", "expense"],"hour_rounding": ["round_up_tenth", "nearest_tenth", "exact"],"invoice_status": ["draft", "issued", "settled", "void"],"ledger_entry_kind": ["flight_charge", "hangarage", "insurance", "expense_credit", "payment", "payout", "adjustment"],"maintenance_basis": ["tach", "calendar"],"maintenance_kind": ["life_limit", "recurring_inspection", "recurring_task"],"member_role": ["pilot", "admin"],"place_kind": ["airport", "water_aerodrome", "heliport", "bay", "lake", "dock", "other"],"place_source": ["ourairports", "osm", "bcgnis", "saved"],"rate_component_kind": ["fuel", "reserve", "operating"],"snag_status": ["open", "watch", "cleared"],"tach_reading_source": ["manual", "flight"],"task_recurrence": ["month_close", "interval_days"],"task_status": ["open", "done", "cancelled"],"tax_treatment": ["taxable", "zero_rated", "exempt", "out_of_scope"]
           }
         }
 } as const

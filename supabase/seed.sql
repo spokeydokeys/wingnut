@@ -425,3 +425,72 @@ values
   ('00000000-0000-0000-0000-00000000c000', '00000000-0000-0000-0000-00000000a001',
    'payment', date '2026-10-03', 'e-Transfer received', -800.00,
    'out_of_scope', '1000', '00000000-0000-0000-0000-00000000a002');
+
+-- ---------------------------------------------------------------------------
+-- Tasks
+--
+-- The reconcile series is real: it is the thing that reminds an admin to match
+-- the coded expenses against the bank, which happens in the general ledger and
+-- not in this app. Ten days' grace because the statements have to arrive first.
+--
+-- The two one-offs below are invented sample data and should be DELETED rather
+-- than corrected, like the snags above.
+-- ---------------------------------------------------------------------------
+
+insert into public.task_series
+  (id, company_id, title, detail, recurrence, due_offset_days, admins_only)
+values (
+  '00000000-0000-0000-0000-0000000ae001',
+  '00000000-0000-0000-0000-00000000c000',
+  'Reconcile the bank account',
+  'Match every coded expense in Wingnut against what actually cleared the '
+  || 'operating account, in the accounting system. Anything on the statement '
+  || 'with no receipt in here needs chasing.',
+  'month_close', 10, true
+);
+
+-- September was reconciled by Owner One, so the rotation says the next one is
+-- Owner Two's -- which is the point of seeding a completed one rather than
+-- starting from empty.
+--
+-- task_stamp_completed is disabled for this statement on purpose: it stamps the
+-- completion from current_member_id(), and a seed has nobody signed in, so a
+-- historical fact cannot be stated any other way.
+alter table public.task disable trigger task_stamp_completed;
+
+insert into public.task
+  (id, company_id, series_id, period_month, title, assignee_member_id,
+   due_date, status, completed_by, completed_at)
+values (
+  '00000000-0000-0000-0000-0000000af001',
+  '00000000-0000-0000-0000-00000000c000',
+  '00000000-0000-0000-0000-0000000ae001',
+  date '2026-09-01',
+  'Reconcile the bank account — Sep 2026',
+  '00000000-0000-0000-0000-00000000a001',
+  date '2026-10-10',
+  'done',
+  '00000000-0000-0000-0000-00000000a001',
+  timestamptz '2026-10-08 19:40:00-07'
+);
+
+alter table public.task enable trigger task_stamp_completed;
+
+insert into public.task
+  (id, company_id, title, detail, assignee_member_id, due_date, created_by)
+values
+  ('00000000-0000-0000-0000-0000000af002',
+   '00000000-0000-0000-0000-00000000c000',
+   'Ring the hangar owner about the water leak',
+   'Drip over the port wing after heavy rain. Ask whether the roof is theirs '
+   || 'to fix before we get a quote.',
+   '00000000-0000-0000-0000-00000000a002',
+   date '2026-10-10',
+   '00000000-0000-0000-0000-00000000a001'),
+  ('00000000-0000-0000-0000-0000000af003',
+   '00000000-0000-0000-0000-00000000c000',
+   'Renew the dock licence',
+   null,
+   '00000000-0000-0000-0000-00000000a001',
+   date '2026-11-30',
+   '00000000-0000-0000-0000-00000000a001');
