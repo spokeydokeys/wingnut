@@ -1,0 +1,23 @@
+<h2>Sign in to Wingnut</h2>
+
+<p>
+  <a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=email">
+    Sign in
+  </a>
+</p>
+
+<p>
+  This link is good for one hour and one use. If you did not ask for it, ignore
+  this email.
+</p>
+
+<!--
+  Deliberately not {{ .ConfirmationURL }}. That default sends the browser to the
+  auth server's /verify endpoint, which sets the session via a URL fragment the
+  server never sees. Linking straight to our own route with the token hash lets
+  a Route Handler call verifyOtp and write httpOnly cookies, which is what the
+  rest of the app reads the session from.
+
+  The same template must be set on the hosted project (Authentication > Email
+  Templates > Magic Link); config.toml only covers the local stack.
+-->
