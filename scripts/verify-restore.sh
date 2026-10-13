@@ -86,11 +86,12 @@ begin
                       'fixed_cost_schedule','fixed_cost',
                       'invoice','invoice_counter','ledger_entry',
                       'place','flight','flight_fix','api_token',
-                      'snag','tach_reading','maintenance_item','maintenance_event');
-  if v_tables <> 21 then
-    raise exception 'FAIL  expected 21 core tables, found %', v_tables;
+                      'snag','tach_reading','maintenance_item','maintenance_event',
+                      'task','task_series');
+  if v_tables <> 23 then
+    raise exception 'FAIL  expected 23 core tables, found %', v_tables;
   end if;
-  raise notice 'PASS  all 21 core tables restored';
+  raise notice 'PASS  all 23 core tables restored';
 
   -- Assert the security-meaningful property rather than a magic total: no core
   -- table may come back without RLS enabled and at least one policy. A dump
@@ -107,7 +108,8 @@ begin
                         'fixed_cost_schedule','fixed_cost',
                         'invoice','ledger_entry',
                         'place','flight','flight_fix','api_token',
-                        'snag','tach_reading','maintenance_item','maintenance_event')
+                        'snag','tach_reading','maintenance_item','maintenance_event',
+                        'task','task_series')
     and (
       not t.rowsecurity
       or not exists (
@@ -836,6 +838,259 @@ begin
   end if;
 
   raise notice 'PASS  a place in use is protected and an unused one is not, on vanilla Postgres';
+end $$;
+SQL
+
+# The chores are the piece that reminds an admin to reconcile the bank, and the
+# reminder is only worth anything if it arrives at the right person. All of
+# that is triggers, a security definer function and a PARTIAL unique index --
+# three things a dump can plausibly lose while still restoring "cleanly" -- so
+# it is checked on the throwaway rather than only locally.
+echo "==> Checking tasks and the rotation"
+psql_in <<'SQL'
+do $$
+declare
+  v_company  uuid;
+  v_air      uuid;
+  v_admin    uuid := '00000000-0000-0000-0000-0000000a00fa';
+  v_pilot    uuid := '00000000-0000-0000-0000-0000000a00f0';
+  v_series   uuid;
+  v_shared   uuid;
+  v_task     uuid;
+  v_next     uuid;
+  v_first    uuid;
+  v_asgn     uuid;
+  v_done     uuid;
+  v_after_done uuid;
+  v_after_asgn uuid;
+  v_month    date;
+  v_count    int;
+  v_made     int;
+  v_due      date;
+  v_blocked  text;
+begin
+  select c.id into v_company from public.company c limit 1;
+  select a.id into v_air from public.aircraft a limit 1;
+
+  -- The stamp trigger attributes a finished chore to whoever is signed in, and
+  -- close_month refuses a non-admin, so this section needs a caller and it has
+  -- to be the admin claimed earlier in the script. Read the auth id back off
+  -- the row rather than restating it, so this cannot drift from the claim.
+  perform set_config('request.jwt.claims',
+    json_build_object(
+      'sub',   (select m.auth_user_id from public.member m where m.id = v_admin),
+      'email', 'restore-admin@example.invalid')::text, true);
+
+  if public.current_member_id() is distinct from v_admin then
+    raise exception 'FAIL  the restore admin could not be resolved for tasks';
+  end if;
+  if not public.is_admin() then
+    raise exception 'FAIL  the restore admin does not read as an admin';
+  end if;
+
+  -- ---------------------------------------------------------------------
+  -- Whose turn
+  -- ---------------------------------------------------------------------
+
+  insert into public.task_series (company_id, title, recurrence, interval_days,
+                                  admins_only)
+  values (v_company, 'Restore float wash', 'interval_days', 90, true)
+  returning id into v_series;
+
+  -- Read who is actually at the top rather than naming them: the roster here
+  -- is whatever the export happened to contain plus the two rows this script
+  -- made, so a hard-coded name would be an assertion about the seed.
+  select r.member_id into v_first
+  from public.task_rotation(v_series) r order by r.turn limit 1;
+
+  select count(*) into v_count from public.task_rotation(v_series)
+   where member_id = v_pilot;
+  if v_count <> 0 then
+    raise exception 'FAIL  a pilot is in the rotation for an admins-only chore after restore';
+  end if;
+
+  -- Varied the other way, or "excluded" could just mean the rotation never had
+  -- anyone but the admins in it to begin with.
+  insert into public.task_series (company_id, title, recurrence, interval_days,
+                                  admins_only)
+  values (v_company, 'Restore shared chore', 'interval_days', 30, false)
+  returning id into v_shared;
+
+  select count(*) into v_count from public.task_rotation(v_shared)
+   where member_id = v_pilot;
+  if v_count <> 1 then
+    raise exception 'FAIL  a pilot is excluded from a chore that is not admins-only';
+  end if;
+
+  raise notice 'PASS  the rotation is the active roster, and admin chores stay with admins, on vanilla Postgres';
+
+  -- ---------------------------------------------------------------------
+  -- The turn advances from whoever did the work
+  -- ---------------------------------------------------------------------
+
+  insert into public.task (company_id, series_id, title, assignee_member_id,
+                           due_date)
+  values (v_company, v_series, 'Restore float wash',
+          public.task_next_assignee(v_series),
+          public.aircraft_today() - 14)
+  returning id into v_task;
+
+  if (select t.assignee_member_id from public.task t where t.id = v_task)
+     is distinct from v_first then
+    raise exception 'FAIL  the first turn did not go to the top of the rotation';
+  end if;
+
+  -- Hand it to somebody else and then do it anyway, which is the ordinary thing
+  -- that happens between two owners -- and the only arrangement under which
+  -- "advances from the completer" and "advances from the assignee" are
+  -- different sentences. Which of them the caller happens to sort next to is
+  -- not something this script can choose, so it is read, not assumed.
+  select r.member_id into v_asgn
+  from public.task_rotation(v_series) r
+  where r.member_id <> v_admin
+  order by r.turn limit 1;
+
+  if v_asgn is null then
+    raise exception 'FAIL  this check is vacuous: the rotation holds nobody but the caller';
+  end if;
+
+  update public.task set assignee_member_id = v_asgn where id = v_task;
+  update public.task set status = 'done' where id = v_task;
+
+  select t.completed_by into v_done from public.task t where t.id = v_task;
+
+  if v_done is distinct from v_admin then
+    raise exception 'FAIL  the restored stamp credits % and not the caller', v_done;
+  end if;
+
+  -- Exactly one successor, 90 days from when it was really done rather than
+  -- from when it was meant to be -- it was deliberately set a fortnight late.
+  select count(*) into v_count from public.task
+   where series_id = v_series and status = 'open';
+  if v_count <> 1 then
+    raise exception 'FAIL  ticking a recurring chore left % successors after restore',
+      v_count;
+  end if;
+
+  select t.due_date, t.assignee_member_id into v_due, v_next
+  from public.task t where t.series_id = v_series and t.status = 'open';
+
+  if v_due <> public.aircraft_today() + 90 then
+    raise exception 'FAIL  the restored successor is due %, not 90 days from today',
+      v_due;
+  end if;
+
+  -- Work out both answers and insist they differ before picking between them,
+  -- otherwise the comparison below proves nothing.
+  select r.member_id into v_after_done
+  from public.task_rotation(v_series) r
+  where r.turn > (select r2.turn from public.task_rotation(v_series) r2
+                   where r2.member_id = v_done)
+  order by r.turn limit 1;
+
+  select r.member_id into v_after_asgn
+  from public.task_rotation(v_series) r
+  where r.turn > (select r2.turn from public.task_rotation(v_series) r2
+                   where r2.member_id = v_asgn)
+  order by r.turn limit 1;
+
+  if v_after_done is not distinct from v_after_asgn then
+    raise exception 'FAIL  this check is vacuous: both rules name the same member';
+  end if;
+
+  if v_next is distinct from v_after_done then
+    raise exception 'FAIL  the turn went to % -- the member after the assignee, not after the completer',
+      v_next;
+  end if;
+
+  raise notice 'PASS  a finished chore is stamped and hands the turn on, on vanilla Postgres';
+
+  -- ---------------------------------------------------------------------
+  -- The chore that closing a month creates
+  -- ---------------------------------------------------------------------
+
+  -- Two months back, so this cannot disturb the invoice assertions earlier in
+  -- the script, and far enough from today that it is certainly not in future.
+  v_month := date_trunc('month', public.aircraft_today() - interval '2 months')::date;
+
+  insert into public.task_series (company_id, title, recurrence,
+                                  due_offset_days)
+  values (v_company, 'Restore reconcile', 'month_close', 10)
+  returning id into v_series;
+
+  perform public.close_month(v_air, v_month);
+
+  select count(*) into v_count from public.task
+   where series_id = v_series and period_month = v_month;
+  if v_count <> 1 then
+    raise exception 'FAIL  closing a month after restore created % chores, not 1',
+      v_count;
+  end if;
+
+  select t.id, t.due_date into v_task, v_due from public.task t
+   where t.series_id = v_series and t.period_month = v_month;
+
+  if v_due <> (v_month + interval '1 month - 1 day')::date + 10 then
+    raise exception 'FAIL  the restored reconcile chore is due %, not ten days after the month end',
+      v_due;
+  end if;
+
+  -- close_month is re-runnable by design, and the partial unique index is half
+  -- of why that is safe. If the dump lost the index, the not-exists guard would
+  -- still make this pass -- so the index is asserted to exist by name as well.
+  if not exists (
+    select 1 from pg_indexes
+    where schemaname = 'public' and indexname = 'task_series_period_idx'
+  ) then
+    raise exception 'FAIL  the partial unique index on (series_id, period_month) did not restore';
+  end if;
+
+  perform public.close_month(v_air, v_month);
+
+  select count(*) into v_count from public.task
+   where series_id = v_series and period_month = v_month;
+  if v_count <> 1 then
+    raise exception 'FAIL  re-closing the month after restore left % chores', v_count;
+  end if;
+
+  -- And a chore already done is not handed back by the next close.
+  update public.task set status = 'done' where id = v_task;
+  perform public.close_month(v_air, v_month);
+
+  select count(*) into v_count from public.task
+   where series_id = v_series and period_month = v_month and status = 'open';
+  if v_count <> 0 then
+    raise exception 'FAIL  re-closing resurrected a reconcile chore already done';
+  end if;
+
+  -- The index is doing real work, not merely present: an insert that evades the
+  -- guard must still be refused.
+  begin
+    insert into public.task (company_id, series_id, period_month, title,
+                             due_date)
+    values (v_company, v_series, v_month, 'Duplicate reconcile', v_due);
+  exception when others then
+    v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  a second chore for the same month and series was accepted';
+  end if;
+
+  -- A different month is a different chore, which is the other half of it.
+  v_made := public.task_spawn_for_month(
+    v_company, (v_month + interval '1 month')::date);
+  if v_made < 1 then
+    raise exception 'FAIL  the following month got no reconcile chore';
+  end if;
+  select count(*) into v_count from public.task
+   where series_id = v_series
+     and period_month = (v_month + interval '1 month')::date;
+  if v_count <> 1 then
+    raise exception 'FAIL  the following month got % chores on this series, not 1',
+      v_count;
+  end if;
+
+  raise notice 'PASS  closing a month creates its reconcile chore exactly once, on vanilla Postgres';
 end $$;
 SQL
 
