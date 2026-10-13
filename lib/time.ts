@@ -47,6 +47,42 @@ export function formatDayShort(iso: string): string {
   }).format(new Date(iso));
 }
 
+/** `8 Oct` -- formatDayShort without the weekday, for a date in prose. */
+export function formatDayMonth(iso: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: AIRCRAFT_TIME_ZONE,
+    day: "numeric",
+    month: "short",
+  }).format(new Date(iso));
+}
+
+/**
+ * `22 Nov 2026` from a `date` column such as a maintenance due date.
+ *
+ * Takes the plain `YYYY-MM-DD` and does not go near a time zone, because a
+ * calendar date has none. Reading "2026-11-22" as an instant would make it
+ * midnight UTC, which is the 21st in Victoria, and the blade clip would appear
+ * to fall due a day early.
+ */
+export function formatDate(isoDate: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(isoDate);
+  if (!match) return isoDate;
+
+  const [, y, mo, d] = match.map(Number);
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(Date.UTC(y, mo - 1, d)));
+}
+
+/** `2026-11-22`, for the value of an `<input type="date">`. */
+export function toDateInputValue(at: Date = new Date()): string {
+  const p = parts(at);
+  return `${p.year}-${p.month}-${p.day}`;
+}
+
 /**
  * `2026-10-12T08:14`, the only shape `<input type="datetime-local">` accepts.
  *

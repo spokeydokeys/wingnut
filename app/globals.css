@@ -23,6 +23,7 @@
 
   --color-accent: #c2410c; /* Start/Stop, the one loud colour */
   --color-ok: #0f766e;
+  --color-warn: #b45309; /* the amber fill of a nearly-full progress bar */
 
   --color-snag: #ffedd5;
   --color-snag-text: #9a3412;

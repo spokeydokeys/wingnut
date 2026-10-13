@@ -19,7 +19,11 @@
 --
 -- Real facts carried over from the spec: the tach factor direction (divide),
 -- the four maintenance items, roughly 500 of 2000 engine hours used, and the
--- 2034 prop calendar limit. Those arrive with the maintenance migration.
+-- 2034 prop calendar limit. Those are at the bottom of this file.
+--
+-- The two snags near the end are invented sample data and should be DELETED
+-- rather than corrected -- unlike everything else here, there is no real value
+-- they stand in for.
 -- =============================================================================
 
 -- Fixed UUIDs so local data is stable across resets and easy to reference.
@@ -160,3 +164,101 @@ insert into public.fixed_cost
   (schedule_id, name, kind, monthly_amount, gl_account_code, tax_treatment, sort_order) values
   ('00000000-0000-0000-0000-0000000e0001', 'Hangarage', 'hangarage', 600.00, '4400', 'taxable',      1),
   ('00000000-0000-0000-0000-0000000e0001', 'Insurance', 'insurance', 450.00, '4500', 'out_of_scope', 2);
+
+-- ---------------------------------------------------------------------------
+-- Opening tach datum
+--
+-- TODO(seed) the real current tach reading, and the date it was read.
+--
+-- Everything on the maintenance screen is measured from this: with no reading
+-- at all, aircraft_tach_estimate returns null and every tach-based item reads
+-- "unknown". 500.00 is chosen to make "about 500 of 2000 engine hours used"
+-- -- which IS a real fact from the spec -- fall out of an engine datum of zero.
+-- ---------------------------------------------------------------------------
+
+insert into public.tach_reading (aircraft_id, reading, read_at, read_by, source, note)
+values (
+  '00000000-0000-0000-0000-0000000ac001',
+  500.00,                                   -- TODO(seed) current tach
+  -- Noon in the aeroplane's zone, for the same reason logTachReading uses noon:
+  -- a bare date is midnight UTC, which is the afternoon BEFORE in Victoria, so
+  -- a reading taken on the 1st would be reported as read on 30 Sept.
+  timestamptz '2026-10-01 12:00 America/Vancouver', -- TODO(seed) when it was read
+  '00000000-0000-0000-0000-00000000a001',
+  'manual',
+  'Opening datum, placeholder figure'
+);
+
+-- ---------------------------------------------------------------------------
+-- The four maintenance items (SPEC.md 4.4)
+--
+-- The items, their intervals and their bases are real. The dates and tachs of
+-- when each was last done are not, and are marked below.
+--
+-- sort_order follows the wireframe: the things that come due often first, the
+-- once-in-a-lifetime limits last.
+--
+-- The prop overhaul carries a due_date and no interval. It is a calendar limit
+-- with no known start, so there is no fraction of its life to draw a bar from,
+-- and the screen shows the date instead. Inventing a start just to have a bar
+-- would be a made-up number presented as a measurement.
+-- ---------------------------------------------------------------------------
+
+insert into public.maintenance_item (
+  id, aircraft_id, name, kind, basis,
+  interval_hours, interval_months, due_date, lead_hours, lead_days, est_cost, sort_order
+) values
+  ('00000000-0000-0000-0000-0000000f0001',
+   '00000000-0000-0000-0000-0000000ac001',
+   'Prop hub grease', 'recurring_task', 'tach',
+   25.0, null, null, 3.0, null, null, 1),       -- lead 3 hr: warn at 22 of 25
+
+  ('00000000-0000-0000-0000-0000000f0002',
+   '00000000-0000-0000-0000-0000000ac001',
+   'Prop blade clip inspection', 'recurring_inspection', 'calendar',
+   null, 24, null, null, 60, null, 2),          -- lead 60 days
+
+  ('00000000-0000-0000-0000-0000000f0003',
+   '00000000-0000-0000-0000-0000000ac001',
+   'Engine overhaul', 'life_limit', 'tach',
+   2000.0, null, null, 100.0, null, null, 3),   -- TODO(seed) est_cost
+
+  ('00000000-0000-0000-0000-0000000f0004',
+   '00000000-0000-0000-0000-0000000ac001',
+   'Prop overhaul', 'life_limit', 'calendar',
+   null, null, date '2034-01-01', null, 180, null, 4);  -- TODO(seed) est_cost
+
+-- Last done, as events rather than columns on the item: the newest event IS the
+-- counter, so correcting one of these corrects the screen.
+--
+-- The engine's event is its zero datum -- the tach reading at which the current
+-- engine started its life, not a job anyone did on this aeroplane. The prop
+-- overhaul has no event at all: it has never been done.
+insert into public.maintenance_event (item_id, done_on, tach, done_by, note) values
+  ('00000000-0000-0000-0000-0000000f0001',
+   date '2026-09-20', 481.00,                 -- TODO(seed) tach at last hub grease
+   '00000000-0000-0000-0000-00000000a001', 'Placeholder: last grease'),
+
+  ('00000000-0000-0000-0000-0000000f0002',
+   date '2024-11-22', null,                   -- TODO(seed) date of last blade clip inspection
+   '00000000-0000-0000-0000-00000000a001', 'Placeholder: last blade clip inspection'),
+
+  ('00000000-0000-0000-0000-0000000f0003',
+   date '2015-01-01', 0.00,                   -- TODO(seed) engine zero-time datum
+   '00000000-0000-0000-0000-00000000a001', 'Placeholder: engine zero datum');
+
+-- ---------------------------------------------------------------------------
+-- Sample snags
+--
+-- TODO(seed) DELETE these two rows. They are the wireframe's invented examples,
+-- here so the Aircraft tab has something to lay out in local development.
+-- ---------------------------------------------------------------------------
+
+insert into public.snag (aircraft_id, title, status, grounding, reported_by, reported_at, notes) values
+  ('00000000-0000-0000-0000-0000000ac001',
+   'Left brake squeals on taxi', 'open', false,
+   '00000000-0000-0000-0000-00000000a002', now() - interval '4 days', null),
+  ('00000000-0000-0000-0000-0000000ac001',
+   'Oil seep at valve cover', 'watch', false,
+   '00000000-0000-0000-0000-00000000a001', now() - interval '21 days',
+   'Re-check at next oil change');

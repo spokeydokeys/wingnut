@@ -61,6 +61,11 @@ declare
   v_unprotected text;
   v_flight      public.flight;
   v_again       public.flight;
+  v_item        uuid;
+  v_interval    numeric;
+  v_hours       numeric;
+  v_state       text;
+  v_ok          boolean;
 begin
   select count(*) into v_tables
   from pg_tables
@@ -69,11 +74,12 @@ begin
                       'gl_account','rate_schedule','rate_component',
                       'fixed_cost_schedule','fixed_cost',
                       'invoice','invoice_counter','ledger_entry',
-                      'place','flight','flight_fix','api_token');
-  if v_tables <> 17 then
-    raise exception 'FAIL  expected 17 core tables, found %', v_tables;
+                      'place','flight','flight_fix','api_token',
+                      'snag','tach_reading','maintenance_item','maintenance_event');
+  if v_tables <> 21 then
+    raise exception 'FAIL  expected 21 core tables, found %', v_tables;
   end if;
-  raise notice 'PASS  all 17 core tables restored';
+  raise notice 'PASS  all 21 core tables restored';
 
   -- Assert the security-meaningful property rather than a magic total: no core
   -- table may come back without RLS enabled and at least one policy. A dump
@@ -89,7 +95,8 @@ begin
                         'gl_account','rate_schedule','rate_component',
                         'fixed_cost_schedule','fixed_cost',
                         'invoice','ledger_entry',
-                        'place','flight','flight_fix','api_token')
+                        'place','flight','flight_fix','api_token',
+                        'snag','tach_reading','maintenance_item','maintenance_event')
     and (
       not t.rowsecurity
       or not exists (
@@ -117,7 +124,8 @@ begin
   from pg_class c
   join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public'
-    and c.relname in ('ledger_entry_posted','gl_journal','flight_running')
+    and c.relname in ('ledger_entry_posted','gl_journal','flight_running',
+                      'maintenance_status')
     -- Parsed rather than string-matched: Postgres stores the option as it was
     -- written, so this is 'on' here and could equally be 'true'.
     and not coalesce((
@@ -128,7 +136,7 @@ begin
   if v_unprotected is not null then
     raise exception 'FAIL  views restored without security_invoker: %', v_unprotected;
   end if;
-  raise notice 'PASS  the ledger views kept security_invoker through the dump';
+  raise notice 'PASS  every view kept security_invoker through the dump';
 
   select count(*) into v_policies from pg_policies where schemaname = 'public';
   raise notice 'PASS  every core table kept RLS enabled, % policies total', v_policies;
@@ -298,6 +306,108 @@ begin
   end;
 
   raise notice 'PASS  the flight timer runs on vanilla Postgres';
+
+  -- The Aircraft tab is almost entirely derived -- the tach estimate, the
+  -- status view, the clearing stamp -- so a restore that brought the tables
+  -- across but not the arithmetic would look healthy and quietly stop tracking
+  -- engine life. Exercise the whole chain.
+
+  -- aircraft_today() must read the aeroplane's zone, not the container's. This
+  -- throwaway runs in UTC, where it is already tomorrow after 5pm Pacific.
+  if public.aircraft_today()
+     is distinct from (now() at time zone 'America/Vancouver')::date then
+    raise exception 'FAIL  aircraft_today() says % after restore',
+      public.aircraft_today();
+  end if;
+
+  -- The flight stopped above carried no meter reading, so the estimate is the
+  -- last real reading plus the flying since -- strictly more than the reading.
+  select r.reading into v_max
+  from public.tach_reading r
+  where r.aircraft_id = (select id from public.aircraft limit 1)
+  order by r.read_at desc, r.created_at desc limit 1;
+
+  if public.aircraft_tach_estimate((select id from public.aircraft limit 1))
+     <= v_max then
+    raise exception 'FAIL  flying since the last reading did not move the estimate';
+  end if;
+
+  -- A tach typed on the Confirm screen is mirrored into tach_reading by the
+  -- database, dated at the flight's end so the flight is not counted on top of
+  -- its own reading.
+  update public.flight set actual_tach_hours = 800.00 where id = v_flight.id;
+
+  select r.reading, r.read_at = v_flight.end_at
+    into v_hours, v_ok
+  from public.tach_reading r where r.flight_id = v_flight.id;
+  if v_hours is distinct from 800.00 or not coalesce(v_ok, false) then
+    raise exception 'FAIL  a confirmed tach restored as % at the wrong moment', v_hours;
+  end if;
+  if public.aircraft_tach_estimate((select id from public.aircraft limit 1))
+     is distinct from 800.00 then
+    raise exception 'FAIL  a flight counted inside its own reading after restore';
+  end if;
+
+  -- A newer reading IS the reset: dated ahead of every flight, nothing is
+  -- added to it.
+  insert into public.tach_reading (aircraft_id, reading, read_at, read_by)
+  values ((select id from public.aircraft limit 1), 900.00,
+          now() + interval '1 day', '00000000-0000-0000-0000-0000000a00f0');
+
+  if public.aircraft_tach_estimate((select id from public.aircraft limit 1))
+     is distinct from 900.00 then
+    raise exception 'FAIL  a fresh reading left the estimate at % after restore',
+      public.aircraft_tach_estimate((select id from public.aircraft limit 1));
+  end if;
+
+  -- The recurring tach task -- the prop hub grease -- is now long overdue
+  -- against that reading, and marking it done is what resets its counter.
+  select i.id, i.interval_hours into v_item, v_interval
+  from public.maintenance_item i
+  where i.basis = 'tach' and i.kind = 'recurring_task' and i.is_active
+  order by i.sort_order limit 1;
+  if v_item is null then
+    raise exception 'FAIL  no recurring tach item survived the restore';
+  end if;
+
+  select s.state into v_state from public.maintenance_status s where s.id = v_item;
+  if v_state is distinct from 'overdue' then
+    raise exception 'FAIL  400 hr past its interval the grease reads %', v_state;
+  end if;
+
+  insert into public.maintenance_event (item_id, done_on, tach, done_by)
+  values (v_item, public.aircraft_today(), 900.00,
+          '00000000-0000-0000-0000-0000000a00f0');
+
+  select s.hours_used, s.hours_remaining, s.state
+    into v_max, v_hours, v_state
+  from public.maintenance_status s where s.id = v_item;
+  if (v_max, v_hours, v_state) is distinct from (0.00, v_interval, 'ok') then
+    raise exception 'FAIL  after marking done the item reads %/%/% after restore',
+      v_max, v_hours, v_state;
+  end if;
+
+  -- Clearing a snag must still be stamped by the database rather than by the
+  -- caller, or a self-hosted instance would accept whatever it was told.
+  insert into public.snag (id, aircraft_id, title, reported_by)
+  values ('00000000-0000-0000-0000-0000000500f0',
+          (select id from public.aircraft limit 1), 'Restore check snag',
+          '00000000-0000-0000-0000-0000000a00f0');
+
+  update public.snag
+     set status     = 'cleared',
+         cleared_by = (select id from public.member
+                        where id <> '00000000-0000-0000-0000-0000000a00f0' limit 1),
+         cleared_at = timestamptz '2001-01-01 00:00:00+00'
+   where id = '00000000-0000-0000-0000-0000000500f0';
+
+  select s.cleared_by into v_item from public.snag s
+   where s.id = '00000000-0000-0000-0000-0000000500f0';
+  if v_item is distinct from '00000000-0000-0000-0000-0000000a00f0'::uuid then
+    raise exception 'FAIL  the restored snag says % cleared it', v_item;
+  end if;
+
+  raise notice 'PASS  the tach estimate and maintenance status derive on vanilla Postgres';
 end $$;
 SQL
 

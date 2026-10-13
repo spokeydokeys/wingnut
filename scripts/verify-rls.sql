@@ -1363,5 +1363,348 @@ begin
 end $$;
 rollback;
 
+-- ===========================================================================
+-- 23. SPEC.md 4.4: the tach is an ESTIMATE between readings -- the last real
+--     reading plus the estimated tach of every flight since -- and logging a
+--     reading "resets its running estimate to match". The reset is not a
+--     separate step: a newer reading simply becomes the datum, and the flights
+--     behind it stop counting.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_est numeric;
+begin
+  v_est := public.aircraft_tach_estimate('00000000-0000-0000-0000-0000000ac001');
+  if v_est is distinct from 500.00 then
+    raise exception 'FAIL  with no flights the estimate is % not the reading', v_est;
+  end if;
+
+  -- Two one-hour flights after the reading: 1/1.3 = 0.769 -> 0.8 tach each.
+  insert into public.flight (aircraft_id, pilot_member_id, start_at, end_at)
+  values ('00000000-0000-0000-0000-0000000ac001',
+          '00000000-0000-0000-0000-00000000a001',
+          timestamptz '2026-10-05 10:00:00-07',
+          timestamptz '2026-10-05 11:00:00-07'),
+         ('00000000-0000-0000-0000-0000000ac001',
+          '00000000-0000-0000-0000-00000000a001',
+          timestamptz '2026-10-06 10:00:00-07',
+          timestamptz '2026-10-06 11:00:00-07');
+
+  v_est := public.aircraft_tach_estimate('00000000-0000-0000-0000-0000000ac001');
+  if v_est is distinct from 501.60 then
+    raise exception 'FAIL  two 0.8 hr flights estimated the tach at %', v_est;
+  end if;
+
+  -- The meter actually says 505.0. Nothing is reset by hand; the new reading
+  -- is simply newer, so the two flights above are now behind it.
+  insert into public.tach_reading (aircraft_id, reading, read_at, read_by)
+  values ('00000000-0000-0000-0000-0000000ac001', 505.00,
+          timestamptz '2026-10-07 09:00:00-07',
+          '00000000-0000-0000-0000-00000000a001');
+
+  v_est := public.aircraft_tach_estimate('00000000-0000-0000-0000-0000000ac001');
+  if v_est is distinct from 505.00 then
+    raise exception 'FAIL  a fresh reading left the estimate at %', v_est;
+  end if;
+
+  -- And counting resumes from the new datum.
+  insert into public.flight (aircraft_id, pilot_member_id, start_at, end_at)
+  values ('00000000-0000-0000-0000-0000000ac001',
+          '00000000-0000-0000-0000-00000000a001',
+          timestamptz '2026-10-08 10:00:00-07',
+          timestamptz '2026-10-08 11:00:00-07');
+
+  v_est := public.aircraft_tach_estimate('00000000-0000-0000-0000-0000000ac001');
+  if v_est is distinct from 505.80 then
+    raise exception 'FAIL  a flight after the reading estimated %', v_est;
+  end if;
+
+  raise notice 'PASS  the tach estimate runs forward from the newest reading';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 24. A tach entered on the Confirm screen is a reading like any other, so it
+--     is mirrored into tach_reading by the database rather than by the app.
+--     It is dated at the flight's END, which is what keeps a flight out of its
+--     own estimate -- date it at the start and the flight would be counted on
+--     top of a reading taken after it landed.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_flight public.flight;
+  v_read   public.tach_reading;
+  v_rows   int;
+  v_est    numeric;
+begin
+  insert into public.flight
+    (aircraft_id, pilot_member_id, start_at, end_at, actual_tach_hours)
+  values ('00000000-0000-0000-0000-0000000ac001',
+          '00000000-0000-0000-0000-00000000a002',
+          timestamptz '2026-10-09 10:00:00-07',
+          timestamptz '2026-10-09 11:00:00-07',
+          506.00)
+  returning * into v_flight;
+
+  select * into v_read from public.tach_reading where flight_id = v_flight.id;
+  if v_read is null then
+    raise exception 'FAIL  a confirmed tach produced no reading';
+  end if;
+  if (v_read.reading, v_read.source, v_read.read_by, v_read.read_at)
+     is distinct from (506.00, 'flight'::public.tach_reading_source,
+                       v_flight.pilot_member_id, v_flight.end_at) then
+    raise exception 'FAIL  the flight reading is %/%/%/%',
+      v_read.reading, v_read.source, v_read.read_by, v_read.read_at;
+  end if;
+
+  -- 506.0 was read AFTER this flight landed, so the flight's own 0.8 hr must
+  -- not be added on top of it.
+  v_est := public.aircraft_tach_estimate('00000000-0000-0000-0000-0000000ac001');
+  if v_est is distinct from 506.00 then
+    raise exception 'FAIL  a flight was counted inside its own reading: %', v_est;
+  end if;
+
+  -- Correcting the figure corrects the reading rather than adding a second one.
+  update public.flight set actual_tach_hours = 507.00 where id = v_flight.id;
+  select count(*) into v_rows from public.tach_reading where flight_id = v_flight.id;
+  if v_rows <> 1 then
+    raise exception 'FAIL  correcting the tach left % readings', v_rows;
+  end if;
+  select * into v_read from public.tach_reading where flight_id = v_flight.id;
+  if v_read.reading is distinct from 507.00 then
+    raise exception 'FAIL  the corrected reading says %', v_read.reading;
+  end if;
+
+  -- Taking it back takes the reading with it, so a mistake leaves no datum.
+  update public.flight set actual_tach_hours = null where id = v_flight.id;
+  select count(*) into v_rows from public.tach_reading where flight_id = v_flight.id;
+  if v_rows <> 0 then
+    raise exception 'FAIL  clearing the tach left % reading(s)', v_rows;
+  end if;
+
+  v_est := public.aircraft_tach_estimate('00000000-0000-0000-0000-0000000ac001');
+  if v_est is distinct from 500.80 then
+    raise exception 'FAIL  after clearing, the estimate is % not seed + 0.8', v_est;
+  end if;
+
+  raise notice 'PASS  a confirmed tach is mirrored as a reading at the flight end';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 25. SPEC.md 4.4: "Marking a task done logs who, when and tach, and resets its
+--     counter." Both halves are one insert, because the status view measures
+--     from the newest event. Any pilot may mark a task done; only an admin may
+--     move the interval, since a pilot who could shorten the grease interval
+--     could also lengthen it.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_left  numeric;
+  v_used  numeric;
+  v_state text;
+  v_rows  int;
+begin
+  select hours_remaining, hours_used, state into v_left, v_used, v_state
+    from public.maintenance_status
+   where id = '00000000-0000-0000-0000-0000000f0001';
+  if (v_left, v_used, v_state) is distinct from (6.00, 19.00, 'ok') then
+    raise exception 'FAIL  the seeded grease reads %/%/%', v_left, v_used, v_state;
+  end if;
+
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set auth_user_id = null;
+  alter table public.member enable trigger member_guard_privileged_columns;
+
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0022",
+      "email":"owner2@example.test"}', true);
+  perform public.claim_member_identity();
+
+  perform set_config('role', 'postgres', true);
+  update public.member set role = 'pilot'
+   where id = '00000000-0000-0000-0000-00000000a002';
+  perform set_config('role', 'authenticated', true);
+
+  -- A pilot cannot stretch the interval.
+  update public.maintenance_item set interval_hours = 100.0
+   where id = '00000000-0000-0000-0000-0000000f0001';
+  get diagnostics v_rows = row_count;
+  if v_rows <> 0 then
+    raise exception 'FAIL  a pilot moved % maintenance interval(s)', v_rows;
+  end if;
+
+  -- But can say they greased it.
+  insert into public.maintenance_event (item_id, done_on, tach, done_by)
+  values ('00000000-0000-0000-0000-0000000f0001', date '2026-10-11', 500.00,
+          '00000000-0000-0000-0000-00000000a002');
+
+  perform set_config('role', 'postgres', true);
+
+  select hours_remaining, hours_used into v_left, v_used
+    from public.maintenance_status
+   where id = '00000000-0000-0000-0000-0000000f0001';
+  if (v_left, v_used) is distinct from (25.00, 0.00) then
+    raise exception 'FAIL  marking it done left % hr left, % used', v_left, v_used;
+  end if;
+
+  raise notice 'PASS  any pilot can mark a task done, and only that resets it';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 26. Who cleared a snag, and when, are stamped by the database from the
+--     session -- never taken from the request. Otherwise a crafted call could
+--     record that somebody else fixed the brake.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_snag public.snag;
+  v_at   timestamptz;
+begin
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set auth_user_id = null;
+  alter table public.member enable trigger member_guard_privileged_columns;
+
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0022",
+      "email":"owner2@example.test"}', true);
+  perform public.claim_member_identity();
+
+  insert into public.snag (aircraft_id, title, reported_by)
+  values ('00000000-0000-0000-0000-0000000ac001', 'Test snag',
+          '00000000-0000-0000-0000-00000000a002')
+  returning * into v_snag;
+
+  if v_snag.cleared_at is not null or v_snag.cleared_by is not null then
+    raise exception 'FAIL  a new open snag is already cleared';
+  end if;
+
+  -- Clear it while claiming the OTHER owner did it, two years ago.
+  update public.snag
+     set status     = 'cleared',
+         cleared_by = '00000000-0000-0000-0000-00000000a001',
+         cleared_at = timestamptz '2024-01-01 00:00:00-08'
+   where id = v_snag.id
+  returning * into v_snag;
+
+  if v_snag.cleared_by is distinct from '00000000-0000-0000-0000-00000000a002' then
+    raise exception 'FAIL  the snag records % as having cleared it', v_snag.cleared_by;
+  end if;
+  if v_snag.cleared_at < now() - interval '1 minute' then
+    raise exception 'FAIL  the clearing was back-dated to %', v_snag.cleared_at;
+  end if;
+  v_at := v_snag.cleared_at;
+
+  -- Editing the notes afterwards must not re-stamp it.
+  update public.snag set notes = 'Brake pads replaced'
+   where id = v_snag.id returning * into v_snag;
+  if v_snag.cleared_at is distinct from v_at then
+    raise exception 'FAIL  editing the notes moved the clearing to %', v_snag.cleared_at;
+  end if;
+
+  -- Re-opening forgets it, so a reopened snag never reads as cleared by anyone.
+  update public.snag set status = 'open'
+   where id = v_snag.id returning * into v_snag;
+  if v_snag.cleared_at is not null or v_snag.cleared_by is not null then
+    raise exception 'FAIL  a reopened snag still claims it was cleared';
+  end if;
+
+  -- A grounding snag that gets cleared must stop grounding the aeroplane; the
+  -- check constraint and the app agree, so assert the invariant holds.
+  update public.snag set grounding = true, status = 'cleared'
+   where id = v_snag.id returning * into v_snag;
+  if v_snag.cleared_at is null then
+    raise exception 'FAIL  clearing a grounding snag left it unstamped';
+  end if;
+
+  perform set_config('role', 'postgres', true);
+  raise notice 'PASS  clearing a snag is stamped by the database, once';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 27. "Today" is today where the AEROPLANE is. current_date is today in the
+--     database's zone, which on managed Postgres is UTC -- so from 5pm Pacific
+--     onward every calendar item would quietly come due a day early. The whole
+--     view must read the same day no matter what zone the caller's session is
+--     in. The pair of this is AIRCRAFT_TIME_ZONE in lib/time.ts.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_utc  int;
+  v_nz   int;
+  v_frac numeric;
+begin
+  set local timezone = 'UTC';
+  select days_remaining, fraction_used into v_utc, v_frac
+    from public.maintenance_status
+   where id = '00000000-0000-0000-0000-0000000f0002';
+
+  -- Deliberately the far side of the date line from Victoria.
+  set local timezone = 'Pacific/Auckland';
+  select days_remaining into v_nz
+    from public.maintenance_status
+   where id = '00000000-0000-0000-0000-0000000f0002';
+
+  set local timezone = 'UTC';
+
+  if v_utc is distinct from v_nz then
+    raise exception 'FAIL  the blade clip is % days away in UTC and % in NZ',
+      v_utc, v_nz;
+  end if;
+  if v_utc is distinct from
+     (date '2026-11-22' - (now() at time zone 'America/Vancouver')::date) then
+    raise exception 'FAIL  % days remaining is not measured from the aeroplane''s today',
+      v_utc;
+  end if;
+  if v_frac is null or v_frac <= 0 or v_frac > 1 then
+    raise exception 'FAIL  the blade clip bar is at %', v_frac;
+  end if;
+
+  raise notice 'PASS  maintenance due dates are measured in the aeroplane''s zone';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 28. The anon role must reach none of the Aircraft tab either. The tab is
+--     behind a login, but the API is public, so each new table says so itself.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_count int;
+  v_rel   text;
+begin
+  perform set_config('role', 'anon', true);
+  perform set_config('request.jwt.claims', null, true);
+
+  -- One at a time, so a flat refusal on the first does not hide a readable
+  -- table behind it. As in test 5, an outright permission error is the
+  -- stronger outcome and counts as a pass; silently reading rows does not.
+  foreach v_rel in array array['snag', 'tach_reading', 'maintenance_item',
+                               'maintenance_event', 'maintenance_status'] loop
+    begin
+      execute format('select count(*) from public.%I', v_rel) into v_count;
+      if v_count <> 0 then
+        raise exception 'FAIL  anon read % row(s) from %', v_count, v_rel;
+      end if;
+    exception when insufficient_privilege then
+      null;
+    end;
+  end loop;
+
+  perform set_config('role', 'postgres', true);
+  raise notice 'PASS  anon cannot read snags, readings or maintenance';
+end $$;
+rollback;
+
 \echo ''
 \echo 'All core schema checks passed.'

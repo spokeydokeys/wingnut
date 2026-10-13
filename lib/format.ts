@@ -50,6 +50,21 @@ export function formatHours(hours: number): string {
   return `${hours.toFixed(1)} hr`;
 }
 
+/**
+ * `6`, `19`, `1,500`, `6.5` -- an hour count for a maintenance caption.
+ *
+ * Unlike formatHours this drops a trailing zero and groups thousands, because
+ * these read as prose ("19 hr since last", "1,500 hr left") rather than lining
+ * up in a column. Life limits run to four figures, where "1500" is a misread
+ * waiting to happen.
+ */
+export function formatHourCount(hours: number): string {
+  return new Intl.NumberFormat("en-CA", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 1,
+  }).format(Math.round(hours * 10) / 10);
+}
+
 export function formatMoney(amount: number): string {
   return new Intl.NumberFormat("en-CA", {
     style: "currency",

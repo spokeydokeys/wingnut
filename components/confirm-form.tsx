@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 
 import { cancelFlight, saveFlight } from "@/app/flight/actions";
+import { FIELD } from "@/components/field";
 import { formatDuration, formatHours, nearestTenth, roundUpTenth } from "@/lib/format";
 import { fromInputValue, toInputValue } from "@/lib/time";
 
@@ -72,9 +73,6 @@ export function ConfirmForm({
     });
   };
 
-  const field =
-    "h-12 w-full rounded-[10px] border border-field bg-surface px-3 text-base font-medium text-ink";
-
   return (
     <>
       <div>
@@ -86,7 +84,7 @@ export function ConfirmForm({
             id="pilot"
             value={pilot}
             onChange={(event) => setPilot(event.target.value)}
-            className={field}
+            className={FIELD}
           >
             {pilots.map((choice) => (
               <option key={choice.id} value={choice.id}>
@@ -97,7 +95,7 @@ export function ConfirmForm({
         ) : (
           // Naming another pilot moves the cost of the flight onto their bill,
           // so for everyone but an admin this is a fact, not a field.
-          <div className={`${field} flex items-center text-muted`}>
+          <div className={`${FIELD} flex items-center text-muted`}>
             {pilots.find((choice) => choice.id === pilot)?.full_name ?? "You"}
           </div>
         )}
@@ -118,7 +116,7 @@ export function ConfirmForm({
             type="datetime-local"
             value={start}
             onChange={(event) => setStart(event.target.value)}
-            className={`${field} numeric`}
+            className={`${FIELD} numeric`}
           />
         </div>
         <div className="flex-1">
@@ -130,7 +128,7 @@ export function ConfirmForm({
             type="datetime-local"
             value={end}
             onChange={(event) => setEnd(event.target.value)}
-            className={`${field} numeric`}
+            className={`${FIELD} numeric`}
           />
         </div>
       </div>
@@ -173,7 +171,7 @@ export function ConfirmForm({
           value={tach}
           onChange={(event) => setTach(event.target.value)}
           placeholder="Enter if you looked at it"
-          className={field}
+          className={FIELD}
         />
       </div>
 
@@ -187,7 +185,7 @@ export function ConfirmForm({
           value={note}
           onChange={(event) => setNote(event.target.value)}
           placeholder="Where to, anything worth remembering"
-          className={field}
+          className={FIELD}
         />
       </div>
 
