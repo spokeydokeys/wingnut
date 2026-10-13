@@ -33,6 +33,60 @@ function readNumber(raw: FormDataEntryValue | null): number | null {
   return Number.isFinite(value) && value >= 0 ? value : null;
 }
 
+/** The three shapes of "come back to this", of which at most one is given. */
+type Recheck = {
+  recheck_item_id: string | null;
+  recheck_tach_hours: number | null;
+  recheck_on: string | null;
+};
+
+const NOTHING: Recheck = {
+  recheck_item_id: null,
+  recheck_tach_hours: null,
+  recheck_on: null,
+};
+
+/**
+ * Reads the re-check group off a snag form.
+ *
+ * One `<select>` decides, so the three columns can never disagree -- which is
+ * also what `snag_recheck_one_way` enforces in the database, because this is
+ * not the only thing that could ever write a snag.
+ *
+ * The hours are an interval, not a tach: `snag_stamp_recheck` measures it from
+ * the tach at the moment of saving, so nothing here has to know what the
+ * running estimate is.
+ */
+function readRecheck(form: FormData): Recheck | Failed {
+  const choice = String(form.get("recheck") ?? "none");
+
+  if (choice.startsWith("item:")) {
+    const id = choice.slice("item:".length);
+    if (!/^[0-9a-f-]{36}$/i.test(id)) {
+      return { error: "That maintenance item could not be read." };
+    }
+    return { ...NOTHING, recheck_item_id: id };
+  }
+
+  if (choice === "tach") {
+    const hours = readNumber(form.get("recheck_hours"));
+    if (hours === null || hours <= 0) {
+      return { error: "Say how many tach hours before it gets another look." };
+    }
+    return { ...NOTHING, recheck_tach_hours: hours };
+  }
+
+  if (choice === "date") {
+    const on = String(form.get("recheck_on") ?? "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(on)) {
+      return { error: "Give the date for the re-check." };
+    }
+    return { ...NOTHING, recheck_on: on };
+  }
+
+  return NOTHING;
+}
+
 export async function addSnag(_prev: Failed | null, form: FormData): Promise<Failed | never> {
   const member = await requireMember();
   const aircraft = await getAircraft();
@@ -46,6 +100,9 @@ export async function addSnag(_prev: Failed | null, form: FormData): Promise<Fai
     return { error: "A new snag is either open or one to watch." };
   }
 
+  const recheck = readRecheck(form);
+  if ("error" in recheck) return recheck;
+
   const supabase = await createClient();
   const { error } = await supabase.from("snag").insert({
     aircraft_id: aircraft.id,
@@ -54,6 +111,7 @@ export async function addSnag(_prev: Failed | null, form: FormData): Promise<Fai
     grounding: form.get("grounding") === "on",
     notes: String(form.get("notes") ?? "").trim() || null,
     reported_by: member.id,
+    ...recheck,
   });
 
   if (error) return { error: error.message };
@@ -78,6 +136,9 @@ export async function updateSnag(_prev: Failed | null, form: FormData): Promise<
     return { error: "That is not a snag status." };
   }
 
+  const recheck = readRecheck(form);
+  if ("error" in recheck) return recheck;
+
   const supabase = await createClient();
   const { error } = await supabase
     .from("snag")
@@ -86,6 +147,9 @@ export async function updateSnag(_prev: Failed | null, form: FormData): Promise<
       // A cleared snag cannot also be grounding the aeroplane.
       grounding: status !== "cleared" && form.get("grounding") === "on",
       notes: String(form.get("notes") ?? "").trim() || null,
+      // Sent even when clearing, where `snag_stamp_recheck` discards it: a snag
+      // that is sorted has nothing left to come back to.
+      ...recheck,
     })
     .eq("id", id);
 

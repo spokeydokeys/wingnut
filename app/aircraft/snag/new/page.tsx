@@ -2,7 +2,10 @@ import { addSnag } from "@/app/aircraft/actions";
 import { ActionForm } from "@/components/action-form";
 import { BackHeader } from "@/components/back-header";
 import { FIELD } from "@/components/field";
+import { RecheckField } from "@/components/recheck-field";
+import { getMaintenanceChoices } from "@/lib/aircraft";
 import { requireMember } from "@/lib/dal";
+import { getAircraft } from "@/lib/flights";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +18,9 @@ export const dynamic = "force-dynamic";
  */
 export default async function NewSnag() {
   await requireMember();
+
+  const aircraft = await getAircraft();
+  const items = aircraft ? await getMaintenanceChoices(aircraft.id) : [];
 
   return (
     <>
@@ -70,6 +76,8 @@ export default async function NewSnag() {
               </span>
             </span>
           </label>
+
+          <RecheckField items={items} itemId={null} tachHours={null} on={null} />
 
           <div>
             <label htmlFor="notes" className="field-label mb-1.5 block">

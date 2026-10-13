@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { markMaintenanceDone } from "@/app/aircraft/actions";
@@ -5,10 +6,10 @@ import { ActionForm } from "@/components/action-form";
 import { BackHeader } from "@/components/back-header";
 import { FIELD } from "@/components/field";
 import { statusText } from "@/components/maintenance-row";
-import { getMaintenanceItem } from "@/lib/aircraft";
+import { getMaintenanceItem, getSnagsWaitingOn } from "@/lib/aircraft";
 import { requireMember } from "@/lib/dal";
 import { formatHourCount } from "@/lib/format";
-import { formatDate, toDateInputValue } from "@/lib/time";
+import { formatDate, formatDayMonth, toDateInputValue } from "@/lib/time";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,7 @@ export default async function MaintenanceItem({
   const item = await getMaintenanceItem(id);
   if (!item) notFound();
 
+  const waiting = await getSnagsWaitingOn(id);
   const onTach = item.basis === "tach";
 
   const lastDone =
@@ -76,6 +78,40 @@ export default async function MaintenanceItem({
             <div className="mt-0.5 text-[15px] font-medium">{due}</div>
           </div>
         </div>
+
+        {/*
+          The payoff for linking a snag to a job: it is said here, to the person
+          who is about to do the job, rather than in a list someone reads at the
+          kitchen table that evening. Above the form because it is something to
+          act on before pressing Mark done, not after.
+        */}
+        {waiting.length > 0 && (
+          <section className="mb-3.5 flex-none rounded-xl border border-snag-line bg-snag px-3.5 py-2.5">
+            <h2 className="field-label text-snag-text">⚠ Waiting on this job</h2>
+            <div className="divide-y divide-snag-line">
+              {waiting.map((snag) => (
+                <Link
+                  key={snag.id}
+                  href={`/aircraft/snag/${snag.id}`}
+                  className="flex min-h-11 items-center justify-between gap-2.5 py-2"
+                >
+                  <span>
+                    <span className="block text-[15px] font-medium">
+                      {snag.title}
+                    </span>
+                    <span className="block text-[13px] text-snag-text">
+                      {snag.status === "watch" ? "Watch" : "Open"} · since{" "}
+                      {formatDayMonth(snag.reported_at)}
+                    </span>
+                  </span>
+                  <span aria-hidden="true" className="flex-none text-snag-text">
+                    ›
+                  </span>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
 
         <ActionForm action={markMaintenanceDone} submitLabel="Mark done">
           <input type="hidden" name="item_id" value={item.id ?? ""} />

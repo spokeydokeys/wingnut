@@ -254,11 +254,19 @@ insert into public.maintenance_event (item_id, done_on, tach, done_by, note) val
 -- here so the Aircraft tab has something to lay out in local development.
 -- ---------------------------------------------------------------------------
 
-insert into public.snag (aircraft_id, title, status, grounding, reported_by, reported_at, notes) values
+-- The seep is the one worth re-checking rather than fixing, so it carries the
+-- re-check: look at it again next time the prop hub is greased and the cowling
+-- is already off. That used to be the whole of its note; it is now a field, and
+-- the mark-done screen for the grease says so.
+insert into public.snag (
+  aircraft_id, title, status, grounding, reported_by, reported_at, notes,
+  recheck_item_id
+) values
   ('00000000-0000-0000-0000-0000000ac001',
    'Left brake squeals on taxi', 'open', false,
-   '00000000-0000-0000-0000-00000000a002', now() - interval '4 days', null),
+   '00000000-0000-0000-0000-00000000a002', now() - interval '4 days', null,
+   null),
   ('00000000-0000-0000-0000-0000000ac001',
    'Oil seep at valve cover', 'watch', false,
-   '00000000-0000-0000-0000-00000000a001', now() - interval '21 days',
-   'Re-check at next oil change');
+   '00000000-0000-0000-0000-00000000a001', now() - interval '21 days', null,
+   '00000000-0000-0000-0000-0000000f0001');

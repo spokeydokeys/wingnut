@@ -453,14 +453,14 @@ isOneToOne: false
                   ]
                 },"snag": {
                   Row: {
-                    "aircraft_id": string,"cleared_at": string | null,"cleared_by": string | null,"created_at": string,"flight_id": string | null,"grounding": boolean,"id": string,"notes": string | null,"reported_at": string,"reported_by": string | null,"status": Database["public"]['Enums']["snag_status"],"title": string,"updated_at": string
+                    "aircraft_id": string,"cleared_at": string | null,"cleared_by": string | null,"created_at": string,"flight_id": string | null,"grounding": boolean,"id": string,"notes": string | null,"recheck_item_id": string | null,"recheck_on": string | null,"recheck_tach_base": number | null,"recheck_tach_hours": number | null,"reported_at": string,"reported_by": string | null,"status": Database["public"]['Enums']["snag_status"],"title": string,"updated_at": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "aircraft_id": string,"cleared_at"?: string | null,"cleared_by"?: string | null,"created_at"?: string,"flight_id"?: string | null,"grounding"?: boolean,"id"?: string,"notes"?: string | null,"reported_at"?: string,"reported_by"?: string | null,"status"?: Database["public"]['Enums']["snag_status"],"title": string,"updated_at"?: string
+                    "aircraft_id": string,"cleared_at"?: string | null,"cleared_by"?: string | null,"created_at"?: string,"flight_id"?: string | null,"grounding"?: boolean,"id"?: string,"notes"?: string | null,"recheck_item_id"?: string | null,"recheck_on"?: string | null,"recheck_tach_base"?: number | null,"recheck_tach_hours"?: number | null,"reported_at"?: string,"reported_by"?: string | null,"status"?: Database["public"]['Enums']["snag_status"],"title": string,"updated_at"?: string
                   }
                   Update: {
-                    "aircraft_id"?: string,"cleared_at"?: string | null,"cleared_by"?: string | null,"created_at"?: string,"flight_id"?: string | null,"grounding"?: boolean,"id"?: string,"notes"?: string | null,"reported_at"?: string,"reported_by"?: string | null,"status"?: Database["public"]['Enums']["snag_status"],"title"?: string,"updated_at"?: string
+                    "aircraft_id"?: string,"cleared_at"?: string | null,"cleared_by"?: string | null,"created_at"?: string,"flight_id"?: string | null,"grounding"?: boolean,"id"?: string,"notes"?: string | null,"recheck_item_id"?: string | null,"recheck_on"?: string | null,"recheck_tach_base"?: number | null,"recheck_tach_hours"?: number | null,"reported_at"?: string,"reported_by"?: string | null,"status"?: Database["public"]['Enums']["snag_status"],"title"?: string,"updated_at"?: string
                   }
                   Relationships: [
                     {
@@ -486,6 +486,18 @@ isOneToOne: false
       columns: ["flight_id"]
 isOneToOne: false
       referencedRelation: "flight_running"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "snag_recheck_item_id_fkey"
+      columns: ["recheck_item_id"]
+isOneToOne: false
+      referencedRelation: "maintenance_item"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "snag_recheck_item_id_fkey"
+      columns: ["recheck_item_id"]
+isOneToOne: false
+      referencedRelation: "maintenance_status"
       referencedColumns: ["id"]
     },{
       foreignKeyName: "snag_reported_by_fkey"

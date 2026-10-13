@@ -4,7 +4,8 @@ import { deleteSnag, updateSnag } from "@/app/aircraft/actions";
 import { ActionForm } from "@/components/action-form";
 import { BackHeader } from "@/components/back-header";
 import { FIELD } from "@/components/field";
-import { getSnag } from "@/lib/aircraft";
+import { RecheckField } from "@/components/recheck-field";
+import { getMaintenanceChoices, getSnag } from "@/lib/aircraft";
 import { requireMember } from "@/lib/dal";
 import { formatDayShort } from "@/lib/time";
 
@@ -25,6 +26,8 @@ export default async function SnagDetail({ params }: PageProps<"/aircraft/snag/[
 
   const snag = await getSnag(id);
   if (!snag) notFound();
+
+  const items = await getMaintenanceChoices(snag.aircraft_id);
 
   return (
     <>
@@ -71,6 +74,13 @@ export default async function SnagDetail({ params }: PageProps<"/aircraft/snag/[
               </span>
             </span>
           </label>
+
+          <RecheckField
+            items={items}
+            itemId={snag.recheck_item_id}
+            tachHours={snag.recheck_tach_hours}
+            on={snag.recheck_on}
+          />
 
           <div>
             <label htmlFor="notes" className="field-label mb-1.5 block">

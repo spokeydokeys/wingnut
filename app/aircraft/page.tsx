@@ -3,7 +3,7 @@ import Link from "next/link";
 import { MaintenanceRow } from "@/components/maintenance-row";
 import { SnagCard } from "@/components/snag-card";
 import { TabBar } from "@/components/tab-bar";
-import { getLiveSnags, getMaintenance } from "@/lib/aircraft";
+import { getLiveSnags, getMaintenance, getTachEstimate } from "@/lib/aircraft";
 import { requireMember } from "@/lib/dal";
 import { getAircraft } from "@/lib/flights";
 
@@ -43,9 +43,13 @@ export default async function Aircraft() {
     );
   }
 
-  const [snags, maintenance] = await Promise.all([
+  const [snags, maintenance, tachNow] = await Promise.all([
     getLiveSnags(aircraft.id),
     getMaintenance(aircraft.id),
+    // For the snags that come back due after a number of hours flown. The
+    // maintenance rows carry the same figure, but a snag is not a maintenance
+    // item and should not have to borrow one's row to know the tach.
+    getTachEstimate(aircraft.id),
   ]);
 
   const open = snags.filter((snag) => snag.status === "open").length;
@@ -76,7 +80,9 @@ export default async function Aircraft() {
             Nothing reported. Anything you notice goes here, however small.
           </p>
         ) : (
-          snags.map((snag) => <SnagCard key={snag.id} snag={snag} />)
+          snags.map((snag) => (
+            <SnagCard key={snag.id} snag={snag} tachNow={tachNow} />
+          ))
         )}
 
         <div className="mt-1.5 flex items-center justify-between px-0.5">

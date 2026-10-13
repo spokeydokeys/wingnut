@@ -5,8 +5,11 @@ import { cache } from "react";
 import { createClient } from "./supabase/server";
 import type { Database } from "./database.types";
 
-export type Snag = Database["public"]["Tables"]["snag"]["Row"] & {
+export type SnagRow = Database["public"]["Tables"]["snag"]["Row"];
+export type Snag = SnagRow & {
   reporter: { full_name: string } | null;
+  /** The maintenance item this snag is waiting on, when it is waiting on one. */
+  recheck_item: { id: string; name: string } | null;
 };
 export type MaintenanceStatus =
   Database["public"]["Views"]["maintenance_status"]["Row"];
@@ -22,6 +25,15 @@ export type TachReading = Database["public"]["Tables"]["tach_reading"]["Row"];
  */
 
 /**
+ * The re-check item is named by both FKs that reach maintenance_item -- the
+ * table and the status view share one -- so the embed says which relation it
+ * means as well as which key.
+ */
+const SNAG_SELECT =
+  "*, reporter:member!snag_reported_by_fkey(full_name)," +
+  " recheck_item:maintenance_item!snag_recheck_item_id_fkey(id, name)";
+
+/**
  * Open and watch snags, newest first. Cleared ones are deliberately absent:
  * SPEC.md 4.3 shows this list as the current state of the aeroplane, and a
  * brake fixed in March is not that. The history is still in the table.
@@ -30,7 +42,7 @@ export async function getLiveSnags(aircraftId: string): Promise<Snag[]> {
   const supabase = await createClient();
   const { data } = await supabase
     .from("snag")
-    .select("*, reporter:member!snag_reported_by_fkey(full_name)")
+    .select(SNAG_SELECT)
     .eq("aircraft_id", aircraftId)
     .neq("status", "cleared")
     // Grounding snags first: one of those is the only thing on this screen
@@ -44,10 +56,27 @@ export async function getSnag(id: string): Promise<Snag | null> {
   const supabase = await createClient();
   const { data } = await supabase
     .from("snag")
-    .select("*, reporter:member!snag_reported_by_fkey(full_name)")
+    .select(SNAG_SELECT)
     .eq("id", id)
     .maybeSingle();
   return (data as Snag | null) ?? null;
+}
+
+/**
+ * The live snags waiting on one maintenance item, for the prompt on its
+ * mark-done screen. This is the point of the link: it catches the person who
+ * has the cowling off, not the one reading the app at the kitchen table.
+ */
+export async function getSnagsWaitingOn(itemId: string): Promise<SnagRow[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("snag")
+    .select("*")
+    .eq("recheck_item_id", itemId)
+    .neq("status", "cleared")
+    .order("grounding", { ascending: false })
+    .order("reported_at", { ascending: false });
+  return data ?? [];
 }
 
 /**
@@ -63,6 +92,24 @@ export async function getMaintenance(
     .from("maintenance_status")
     .select("*")
     .eq("aircraft_id", aircraftId)
+    .order("sort_order");
+  return data ?? [];
+}
+
+/**
+ * Just the names, for the "re-check at the next ..." dropdown on a snag. The
+ * status view is not used here because none of its arithmetic is wanted: this
+ * is a list of jobs that recur, not a report on how overdue they are.
+ */
+export async function getMaintenanceChoices(
+  aircraftId: string,
+): Promise<{ id: string; name: string }[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("maintenance_item")
+    .select("id, name")
+    .eq("aircraft_id", aircraftId)
+    .eq("is_active", true)
     .order("sort_order");
   return data ?? [];
 }

@@ -66,6 +66,7 @@ declare
   v_hours       numeric;
   v_state       text;
   v_ok          boolean;
+  v_base        numeric;
 begin
   select count(*) into v_tables
   from pg_tables
@@ -407,7 +408,49 @@ begin
     raise exception 'FAIL  the restored snag says % cleared it', v_item;
   end if;
 
-  raise notice 'PASS  the tach estimate and maintenance status derive on vanilla Postgres';
+  -- A snag's re-check is arithmetic on a remembered datum, so it is the kind of
+  -- thing that restores as a column and quietly stops working. "Check again in
+  -- 10 hr" has to be armed from the tach as it stood, and has to hold still: a
+  -- datum re-stamped on every save pushes the reminder further away each time
+  -- anyone opens the snag.
+  insert into public.snag
+    (id, aircraft_id, title, status, reported_by,
+     recheck_tach_hours, recheck_tach_base)
+  values ('00000000-0000-0000-0000-0000000500f1',
+          (select id from public.aircraft limit 1), 'Restore check watch',
+          'watch', '00000000-0000-0000-0000-0000000a00f0', 10.0, 0.00);
+
+  select s.recheck_tach_base into v_base from public.snag s
+   where s.id = '00000000-0000-0000-0000-0000000500f1';
+  if v_base is distinct from 900.00 then
+    raise exception 'FAIL  the restored re-check was armed at % not the tach estimate',
+      v_base;
+  end if;
+
+  -- The meter moves on. Re-saving the snag must not re-arm it.
+  insert into public.tach_reading (aircraft_id, reading, read_at, read_by)
+  values ((select id from public.aircraft limit 1), 950.00,
+          now() + interval '2 days', '00000000-0000-0000-0000-0000000a00f0');
+
+  update public.snag set notes = 'Still watching it'
+   where id = '00000000-0000-0000-0000-0000000500f1';
+
+  select s.recheck_tach_base into v_base from public.snag s
+   where s.id = '00000000-0000-0000-0000-0000000500f1';
+  if v_base is distinct from 900.00 then
+    raise exception 'FAIL  re-saving a restored snag moved its datum to %', v_base;
+  end if;
+
+  -- And one snag still answers "when should this come back?" one way only.
+  begin
+    update public.snag set recheck_on = public.aircraft_today()
+     where id = '00000000-0000-0000-0000-0000000500f1';
+    raise exception 'FAIL  a restored snag waits on hours AND on a date';
+  exception when others then
+    if sqlerrm like 'FAIL%' then raise; end if;
+  end;
+
+  raise notice 'PASS  the tach estimate, maintenance status and snag re-checks derive on vanilla Postgres';
 end $$;
 SQL
 

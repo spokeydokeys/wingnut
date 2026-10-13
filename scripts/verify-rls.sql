@@ -1706,5 +1706,146 @@ begin
 end $$;
 rollback;
 
+-- ===========================================================================
+-- 29. "Changed oil type, check again in 10 hr" means ten hours of FLYING from
+--     when it was asked for, so the tach at that moment has to be remembered.
+--     Two things have to be true of that datum: the caller cannot choose it,
+--     and it holds still. A datum re-stamped on every save would push the
+--     re-check further away each time anyone opened the snag -- a reminder
+--     that quietly never arrives.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_snag public.snag;
+begin
+  -- Armed against the seeded 500.00 reading, while claiming a datum of its own.
+  insert into public.snag
+    (aircraft_id, title, status, reported_by,
+     recheck_tach_hours, recheck_tach_base)
+  values ('00000000-0000-0000-0000-0000000ac001', 'Changed oil type', 'watch',
+          '00000000-0000-0000-0000-00000000a001', 10.0, 0.00)
+  returning * into v_snag;
+
+  if v_snag.recheck_tach_base is distinct from 500.00 then
+    raise exception 'FAIL  the re-check was armed at % rather than the tach estimate',
+      v_snag.recheck_tach_base;
+  end if;
+
+  -- An hour's flying: 1/1.3 = 0.8 tach, so the re-check is now 9.2 hr away.
+  insert into public.flight (aircraft_id, pilot_member_id, start_at, end_at)
+  values ('00000000-0000-0000-0000-0000000ac001',
+          '00000000-0000-0000-0000-00000000a001',
+          timestamptz '2026-10-05 10:00:00-07',
+          timestamptz '2026-10-05 11:00:00-07');
+
+  update public.snag set notes = 'Still watching it'
+   where id = v_snag.id returning * into v_snag;
+  if v_snag.recheck_tach_base is distinct from 500.00 then
+    raise exception 'FAIL  re-saving the snag moved the datum to %',
+      v_snag.recheck_tach_base;
+  end if;
+
+  -- Moving the interval DOES re-arm it: twenty hours means twenty from now.
+  update public.snag set recheck_tach_hours = 20.0
+   where id = v_snag.id returning * into v_snag;
+  if v_snag.recheck_tach_base is distinct from 500.80 then
+    raise exception 'FAIL  a new interval was measured from % not the current tach',
+      v_snag.recheck_tach_base;
+  end if;
+
+  -- Cancelling the re-check takes the datum with it, which is also what
+  -- snag_recheck_base_needs_hours insists on.
+  update public.snag set recheck_tach_hours = null
+   where id = v_snag.id returning * into v_snag;
+  if v_snag.recheck_tach_base is not null then
+    raise exception 'FAIL  a cancelled re-check kept its datum of %',
+      v_snag.recheck_tach_base;
+  end if;
+
+  -- And clearing the snag forgets the re-check entirely: a snag that is sorted
+  -- has nothing left to come back to.
+  update public.snag
+     set recheck_item_id = '00000000-0000-0000-0000-0000000f0001'
+   where id = v_snag.id;
+  update public.snag set status = 'cleared'
+   where id = v_snag.id returning * into v_snag;
+  if v_snag.recheck_item_id is not null then
+    raise exception 'FAIL  a cleared snag is still waiting on a maintenance item';
+  end if;
+
+  raise notice 'PASS  a re-check interval is measured from the tach when it was set';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 30. A snag answers "when should this come back?" exactly one way. Two
+--     answers at once would leave every screen inventing its own precedence
+--     rule. And the link is a convenience, not a dependency: retiring the job
+--     a snag was waiting on must leave the snag behind, because the seep is
+--     still there whether or not anyone still greases the hub.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_snag    public.snag;
+  v_blocked text;
+  v_rows    int;
+begin
+  insert into public.snag
+    (aircraft_id, title, status, reported_by, recheck_item_id)
+  values ('00000000-0000-0000-0000-0000000ac001', 'Oil seep at valve cover',
+          'watch', '00000000-0000-0000-0000-00000000a001',
+          '00000000-0000-0000-0000-0000000f0001')
+  returning * into v_snag;
+
+  begin
+    update public.snag set recheck_on = date '2026-12-01' where id = v_snag.id;
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  a snag waits on a job AND falls due on a date';
+  end if;
+
+  begin
+    update public.snag set recheck_tach_hours = 10.0 where id = v_snag.id;
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  a snag waits on a job AND on a number of hours flown';
+  end if;
+
+  -- The mark-done screen's question: which live snags wait on this job?
+  select count(*) into v_rows
+    from public.snag s
+   where s.recheck_item_id = '00000000-0000-0000-0000-0000000f0001'
+     and s.status <> 'cleared'
+     and s.id = v_snag.id;
+  if v_rows <> 1 then
+    raise exception 'FAIL  the snag waiting on the grease was not found';
+  end if;
+
+  delete from public.maintenance_item
+   where id = '00000000-0000-0000-0000-0000000f0001';
+
+  -- Counted, not re-selected into the record: a SELECT that finds nothing
+  -- leaves a plpgsql record holding its previous value, so `v_snag.id is null`
+  -- would never fire and the assertion would pass vacuously.
+  select count(*) into v_rows from public.snag where id = v_snag.id;
+  if v_rows <> 1 then
+    raise exception 'FAIL  retiring the job deleted the snag waiting on it';
+  end if;
+
+  select * into v_snag from public.snag where id = v_snag.id;
+  if v_snag.recheck_item_id is not null then
+    raise exception 'FAIL  the snag still points at a job that no longer exists';
+  end if;
+
+  raise notice 'PASS  a snag comes back exactly one way, and outlives the job';
+end $$;
+rollback;
+
 \echo ''
 \echo 'All core schema checks passed.'
