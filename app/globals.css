@@ -1,26 +1,63 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/*
+ * The palette, type and radii from the wireframes, as theme tokens.
+ *
+ * SPEC.md says the wireframes are the authority on visual styling, so these
+ * values are copied from them rather than invented. Naming them here means a
+ * component says `bg-snag` rather than `bg-[#FFEDD5]`, and the day the colour
+ * changes it changes in one place.
+ *
+ * Deliberately no dark mode. A cockpit in daylight wants one high-contrast
+ * scheme, and the wireframes only specify this one; a half-guessed dark
+ * palette would look worse than none.
+ */
+@theme {
+  --color-ink: #14213d; /* body text, and the dark button fill */
+  --color-muted: #5b6676; /* labels, captions, inactive tabs */
+  --color-line: #c9ced6; /* card borders */
+  --color-hairline: #e5e7eb; /* dividers inside a card */
+  --color-screen: #f3f4f6; /* the page behind the cards */
+  --color-surface: #ffffff; /* the cards themselves */
+  --color-field: #9aa3b0; /* input borders, darker than a card edge */
+
+  --color-accent: #c2410c; /* Start/Stop, the one loud colour */
+  --color-ok: #0f766e;
+
+  --color-snag: #ffedd5;
+  --color-snag-text: #9a3412;
+  --color-snag-line: #fdba74;
+
+  --color-caution: #fef3c7;
+  --color-caution-text: #92400e;
+  --color-caution-line: #fcd34d;
+
+  --color-neutral-chip: #e5e7eb;
+  --color-neutral-chip-text: #374151;
+
+  --font-sans: var(--font-plex-sans), system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/*
+ * Numbers are monospaced throughout: elapsed time, hours and money all read
+ * in columns or tick upward, and a proportional font makes them jump about.
+ */
+@utility numeric {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* The small uppercase label above almost every value in the wireframes. */
+@utility field-label {
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-muted);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-screen);
+  color: var(--color-ink);
 }

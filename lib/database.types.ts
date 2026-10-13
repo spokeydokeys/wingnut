@@ -25,6 +25,26 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"api_token": {
+                  Row: {
+                    "created_at": string,"id": string,"label": string | null,"last_used_at": string | null,"member_id": string,"revoked_at": string | null,"token_hash": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "created_at"?: string,"id"?: string,"label"?: string | null,"last_used_at"?: string | null,"member_id": string,"revoked_at"?: string | null,"token_hash": string
+                  }
+                  Update: {
+                    "created_at"?: string,"id"?: string,"label"?: string | null,"last_used_at"?: string | null,"member_id"?: string,"revoked_at"?: string | null,"token_hash"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "api_token_member_id_fkey"
+      columns: ["member_id"]
+isOneToOne: false
+      referencedRelation: "member"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"company": {
                   Row: {
                     "ar_account_code": string | null,"bank_account_code": string | null,"created_at": string,"etransfer_recipient": string | null,"fiscal_year_end_month": number,"gst_number": string | null,"gst_registered": boolean,"id": string,"legal_name": string,"updated_at": string
@@ -76,6 +96,76 @@ isOneToOne: false
       columns: ["aircraft_id"]
 isOneToOne: false
       referencedRelation: "aircraft"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"flight": {
+                  Row: {
+                    "actual_tach_hours": number | null,"aircraft_id": string,"billed_hours": number | null,"created_at": string,"dest_place_id": string | null,"end_at": string | null,"end_fix_accuracy_m": number | null,"end_fix_at": string | null,"est_tach_hours": number | null,"flight_hours": number | null,"id": string,"invoice_id": string | null,"journey_text": string | null,"landing_place_uncertain": boolean,"notes": string | null,"origin_place_id": string | null,"pilot_member_id": string,"start_at": string,"start_fix_accuracy_m": number | null,"start_fix_at": string | null,"start_idempotency_key": string | null,"status": Database["public"]['Enums']["flight_status"],"stop_idempotency_key": string | null,"tach_factor_used": number,"updated_at": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "actual_tach_hours"?: number | null,"aircraft_id": string,"billed_hours"?: number | null,"created_at"?: string,"dest_place_id"?: string | null,"end_at"?: string | null,"end_fix_accuracy_m"?: number | null,"end_fix_at"?: string | null,"est_tach_hours"?: number | null,"flight_hours"?: never,"id"?: string,"invoice_id"?: string | null,"journey_text"?: string | null,"landing_place_uncertain"?: boolean,"notes"?: string | null,"origin_place_id"?: string | null,"pilot_member_id": string,"start_at"?: string,"start_fix_accuracy_m"?: number | null,"start_fix_at"?: string | null,"start_idempotency_key"?: string | null,"status"?: Database["public"]['Enums']["flight_status"],"stop_idempotency_key"?: string | null,"tach_factor_used": number,"updated_at"?: string
+                  }
+                  Update: {
+                    "actual_tach_hours"?: number | null,"aircraft_id"?: string,"billed_hours"?: number | null,"created_at"?: string,"dest_place_id"?: string | null,"end_at"?: string | null,"end_fix_accuracy_m"?: number | null,"end_fix_at"?: string | null,"est_tach_hours"?: number | null,"flight_hours"?: never,"id"?: string,"invoice_id"?: string | null,"journey_text"?: string | null,"landing_place_uncertain"?: boolean,"notes"?: string | null,"origin_place_id"?: string | null,"pilot_member_id"?: string,"start_at"?: string,"start_fix_accuracy_m"?: number | null,"start_fix_at"?: string | null,"start_idempotency_key"?: string | null,"status"?: Database["public"]['Enums']["flight_status"],"stop_idempotency_key"?: string | null,"tach_factor_used"?: number,"updated_at"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "flight_aircraft_id_fkey"
+      columns: ["aircraft_id"]
+isOneToOne: false
+      referencedRelation: "aircraft"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "flight_dest_place_id_fkey"
+      columns: ["dest_place_id"]
+isOneToOne: false
+      referencedRelation: "place"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "flight_invoice_id_fkey"
+      columns: ["invoice_id"]
+isOneToOne: false
+      referencedRelation: "invoice"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "flight_origin_place_id_fkey"
+      columns: ["origin_place_id"]
+isOneToOne: false
+      referencedRelation: "place"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "flight_pilot_member_id_fkey"
+      columns: ["pilot_member_id"]
+isOneToOne: false
+      referencedRelation: "member"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"flight_fix": {
+                  Row: {
+                    "accuracy_m": number | null,"created_at": string,"flight_id": string,"lat": number,"lon": number,"source": Database["public"]['Enums']["fix_source"],"taken_at": string,"which": Database["public"]['Enums']["fix_which"]
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "accuracy_m"?: number | null,"created_at"?: string,"flight_id": string,"lat": number,"lon": number,"source"?: Database["public"]['Enums']["fix_source"],"taken_at"?: string,"which": Database["public"]['Enums']["fix_which"]
+                  }
+                  Update: {
+                    "accuracy_m"?: number | null,"created_at"?: string,"flight_id"?: string,"lat"?: number,"lon"?: number,"source"?: Database["public"]['Enums']["fix_source"],"taken_at"?: string,"which"?: Database["public"]['Enums']["fix_which"]
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "flight_fix_flight_id_fkey"
+      columns: ["flight_id"]
+isOneToOne: false
+      referencedRelation: "flight"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "flight_fix_flight_id_fkey"
+      columns: ["flight_id"]
+isOneToOne: false
+      referencedRelation: "flight_running"
       referencedColumns: ["id"]
     }
                   ]
@@ -243,6 +333,32 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"place": {
+                  Row: {
+                    "company_id": string,"created_at": string,"created_by": string | null,"external_id": string | null,"id": string,"kind": Database["public"]['Enums']["place_kind"],"lat": number,"lon": number,"name": string,"source": Database["public"]['Enums']["place_source"],"updated_at": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "company_id": string,"created_at"?: string,"created_by"?: string | null,"external_id"?: string | null,"id"?: string,"kind"?: Database["public"]['Enums']["place_kind"],"lat": number,"lon": number,"name": string,"source"?: Database["public"]['Enums']["place_source"],"updated_at"?: string
+                  }
+                  Update: {
+                    "company_id"?: string,"created_at"?: string,"created_by"?: string | null,"external_id"?: string | null,"id"?: string,"kind"?: Database["public"]['Enums']["place_kind"],"lat"?: number,"lon"?: number,"name"?: string,"source"?: Database["public"]['Enums']["place_source"],"updated_at"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "place_company_id_fkey"
+      columns: ["company_id"]
+isOneToOne: false
+      referencedRelation: "company"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "place_created_by_fkey"
+      columns: ["created_by"]
+isOneToOne: false
+      referencedRelation: "member"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"rate_component": {
                   Row: {
                     "gl_account_code": string,"id": string,"kind": Database["public"]['Enums']["rate_component_kind"],"name": string,"rate_per_hour": number,"schedule_id": string,"sort_order": number,"tax_treatment": Database["public"]['Enums']["tax_treatment"]
@@ -286,7 +402,51 @@ isOneToOne: false
                 }
           }
           Views: {
-            "gl_journal": {
+            "flight_running": {
+                  Row: {
+                    "actual_tach_hours": number | null,"aircraft_id": string | null,"billed_hours": number | null,"created_at": string | null,"dest_place_id": string | null,"end_at": string | null,"end_fix_accuracy_m": number | null,"end_fix_at": string | null,"est_tach_hours": number | null,"flight_hours": number | null,"id": string | null,"invoice_id": string | null,"journey_text": string | null,"landing_place_uncertain": boolean | null,"notes": string | null,"origin_place_id": string | null,"pilot_member_id": string | null,"start_at": string | null,"start_fix_accuracy_m": number | null,"start_fix_at": string | null,"start_idempotency_key": string | null,"status": Database["public"]['Enums']["flight_status"] | null,"stop_idempotency_key": string | null,"tach_factor_used": number | null,"updated_at": string | null
+                  }
+                  ComputedFields: never
+                  Insert: {
+                           "actual_tach_hours"?: number | null,"aircraft_id"?: string | null,"billed_hours"?: number | null,"created_at"?: string | null,"dest_place_id"?: string | null,"end_at"?: string | null,"end_fix_accuracy_m"?: number | null,"end_fix_at"?: string | null,"est_tach_hours"?: number | null,"flight_hours"?: number | null,"id"?: string | null,"invoice_id"?: string | null,"journey_text"?: string | null,"landing_place_uncertain"?: boolean | null,"notes"?: string | null,"origin_place_id"?: string | null,"pilot_member_id"?: string | null,"start_at"?: string | null,"start_fix_accuracy_m"?: number | null,"start_fix_at"?: string | null,"start_idempotency_key"?: string | null,"status"?: Database["public"]['Enums']["flight_status"] | null,"stop_idempotency_key"?: string | null,"tach_factor_used"?: number | null,"updated_at"?: string | null
+                         }
+                        Update: {
+                           "actual_tach_hours"?: number | null,"aircraft_id"?: string | null,"billed_hours"?: number | null,"created_at"?: string | null,"dest_place_id"?: string | null,"end_at"?: string | null,"end_fix_accuracy_m"?: number | null,"end_fix_at"?: string | null,"est_tach_hours"?: number | null,"flight_hours"?: number | null,"id"?: string | null,"invoice_id"?: string | null,"journey_text"?: string | null,"landing_place_uncertain"?: boolean | null,"notes"?: string | null,"origin_place_id"?: string | null,"pilot_member_id"?: string | null,"start_at"?: string | null,"start_fix_accuracy_m"?: number | null,"start_fix_at"?: string | null,"start_idempotency_key"?: string | null,"status"?: Database["public"]['Enums']["flight_status"] | null,"stop_idempotency_key"?: string | null,"tach_factor_used"?: number | null,"updated_at"?: string | null
+                         }
+                        Relationships: [
+                    {
+      foreignKeyName: "flight_aircraft_id_fkey"
+      columns: ["aircraft_id"]
+isOneToOne: false
+      referencedRelation: "aircraft"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "flight_dest_place_id_fkey"
+      columns: ["dest_place_id"]
+isOneToOne: false
+      referencedRelation: "place"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "flight_invoice_id_fkey"
+      columns: ["invoice_id"]
+isOneToOne: false
+      referencedRelation: "invoice"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "flight_origin_place_id_fkey"
+      columns: ["origin_place_id"]
+isOneToOne: false
+      referencedRelation: "place"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "flight_pilot_member_id_fkey"
+      columns: ["pilot_member_id"]
+isOneToOne: false
+      referencedRelation: "member"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"gl_journal": {
                   Row: {
                     "company_id": string | null,"debit_credit": number | null,"description": string | null,"entry_date": string | null,"gl_account_code": string | null,"invoice_number": number | null,"kind": Database["public"]['Enums']["ledger_entry_kind"] | null,"ledger_entry_id": string | null,"line_no": number | null,"member_id": string | null,"tax_treatment": Database["public"]['Enums']["tax_treatment"] | null
                   }
@@ -352,6 +512,9 @@ isOneToOne: false
 "member_balance":
 { Args: { "p_member_id": string }; Returns: number
                            },
+"member_for_token_hash":
+{ Args: { "p_token_hash": string }; Returns: string
+                           },
 "next_invoice_number":
 { Args: { "p_company_id": string }; Returns: number
                            },
@@ -368,12 +531,83 @@ isOneToOne: false
 "rate_schedule_as_of":
 { Args: { "p_aircraft_id": string,"p_on": string }; Returns: string
                            },
+"round_hours":
+{ Args: { "p_hours": number,"p_rule": Database["public"]['Enums']["hour_rounding"] }; Returns: number
+                           },
+"timer_start":
+{ Args: { "p_accuracy_m"?: number,"p_aircraft_id"?: string,"p_idempotency_key"?: string,"p_lat"?: number,"p_lon"?: number,"p_token_hash": string }; Returns: {
+              "actual_tach_hours": number | null,
+"aircraft_id": string,
+"billed_hours": number | null,
+"created_at": string,
+"dest_place_id": string | null,
+"end_at": string | null,
+"end_fix_accuracy_m": number | null,
+"end_fix_at": string | null,
+"est_tach_hours": number | null,
+"flight_hours": number | null,
+"id": string,
+"invoice_id": string | null,
+"journey_text": string | null,
+"landing_place_uncertain": boolean,
+"notes": string | null,
+"origin_place_id": string | null,
+"pilot_member_id": string,
+"start_at": string,
+"start_fix_accuracy_m": number | null,
+"start_fix_at": string | null,
+"start_idempotency_key": string | null,
+"status": Database["public"]['Enums']["flight_status"],
+"stop_idempotency_key": string | null,
+"tach_factor_used": number,
+"updated_at": string
+            }
+                          SetofOptions: {
+        from: "*"
+        to: "flight"
+        isOneToOne: true
+        isSetofReturn: false
+      } },
+"timer_stop":
+{ Args: { "p_accuracy_m"?: number,"p_aircraft_id"?: string,"p_idempotency_key"?: string,"p_lat"?: number,"p_lon"?: number,"p_token_hash": string }; Returns: {
+              "actual_tach_hours": number | null,
+"aircraft_id": string,
+"billed_hours": number | null,
+"created_at": string,
+"dest_place_id": string | null,
+"end_at": string | null,
+"end_fix_accuracy_m": number | null,
+"end_fix_at": string | null,
+"est_tach_hours": number | null,
+"flight_hours": number | null,
+"id": string,
+"invoice_id": string | null,
+"journey_text": string | null,
+"landing_place_uncertain": boolean,
+"notes": string | null,
+"origin_place_id": string | null,
+"pilot_member_id": string,
+"start_at": string,
+"start_fix_accuracy_m": number | null,
+"start_fix_at": string | null,
+"start_idempotency_key": string | null,
+"status": Database["public"]['Enums']["flight_status"],
+"stop_idempotency_key": string | null,
+"tach_factor_used": number,
+"updated_at": string
+            }
+                          SetofOptions: {
+        from: "*"
+        to: "flight"
+        isOneToOne: true
+        isSetofReturn: false
+      } },
 "wet_rate_as_of":
 { Args: { "p_aircraft_id": string,"p_on": string }; Returns: number
                            }
           }
           Enums: {
-            "billing_basis": "flight_time"|"tach","expense_approval_rule": "any_other_owner"|"admin_only","fixed_cost_split": "ownership_pct"|"equal"|"hours_flown","gl_account_type": "asset"|"liability"|"equity"|"revenue"|"expense","hour_rounding": "round_up_tenth"|"nearest_tenth"|"exact","invoice_status": "draft"|"issued"|"settled"|"void","ledger_entry_kind": "flight_charge"|"hangarage"|"insurance"|"expense_credit"|"payment"|"payout"|"adjustment","member_role": "pilot"|"admin","rate_component_kind": "fuel"|"reserve"|"operating","tax_treatment": "taxable"|"zero_rated"|"exempt"|"out_of_scope"
+            "billing_basis": "flight_time"|"tach","expense_approval_rule": "any_other_owner"|"admin_only","fix_source": "gps"|"manual","fix_which": "start"|"end","fixed_cost_split": "ownership_pct"|"equal"|"hours_flown","flight_status": "draft"|"confirmed"|"billed","gl_account_type": "asset"|"liability"|"equity"|"revenue"|"expense","hour_rounding": "round_up_tenth"|"nearest_tenth"|"exact","invoice_status": "draft"|"issued"|"settled"|"void","ledger_entry_kind": "flight_charge"|"hangarage"|"insurance"|"expense_credit"|"payment"|"payout"|"adjustment","member_role": "pilot"|"admin","place_kind": "airport"|"water_aerodrome"|"heliport"|"bay"|"lake"|"dock"|"other","place_source": "ourairports"|"osm"|"bcgnis"|"saved","rate_component_kind": "fuel"|"reserve"|"operating","tax_treatment": "taxable"|"zero_rated"|"exempt"|"out_of_scope"
           }
           CompositeTypes: {
             [_ in never]: never
@@ -489,7 +723,7 @@ export type CompositeTypes<
 export const Constants = {
   "public": {
           Enums: {
-            "billing_basis": ["flight_time", "tach"],"expense_approval_rule": ["any_other_owner", "admin_only"],"fixed_cost_split": ["ownership_pct", "equal", "hours_flown"],"gl_account_type": ["asset", "liability", "equity", "revenue", "expense"],"hour_rounding": ["round_up_tenth", "nearest_tenth", "exact"],"invoice_status": ["draft", "issued", "settled", "void"],"ledger_entry_kind": ["flight_charge", "hangarage", "insurance", "expense_credit", "payment", "payout", "adjustment"],"member_role": ["pilot", "admin"],"rate_component_kind": ["fuel", "reserve", "operating"],"tax_treatment": ["taxable", "zero_rated", "exempt", "out_of_scope"]
+            "billing_basis": ["flight_time", "tach"],"expense_approval_rule": ["any_other_owner", "admin_only"],"fix_source": ["gps", "manual"],"fix_which": ["start", "end"],"fixed_cost_split": ["ownership_pct", "equal", "hours_flown"],"flight_status": ["draft", "confirmed", "billed"],"gl_account_type": ["asset", "liability", "equity", "revenue", "expense"],"hour_rounding": ["round_up_tenth", "nearest_tenth", "exact"],"invoice_status": ["draft", "issued", "settled", "void"],"ledger_entry_kind": ["flight_charge", "hangarage", "insurance", "expense_credit", "payment", "payout", "adjustment"],"member_role": ["pilot", "admin"],"place_kind": ["airport", "water_aerodrome", "heliport", "bay", "lake", "dock", "other"],"place_source": ["ourairports", "osm", "bcgnis", "saved"],"rate_component_kind": ["fuel", "reserve", "operating"],"tax_treatment": ["taxable", "zero_rated", "exempt", "out_of_scope"]
           }
         }
 } as const

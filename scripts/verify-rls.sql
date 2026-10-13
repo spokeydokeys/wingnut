@@ -8,6 +8,18 @@
 -- seed data. Any FAIL raises and aborts. RLS is exercised by setting
 -- request.jwt.claims, which is what auth.uid() reads, rather than by creating
 -- real auth users.
+--
+-- Several tests sign a member in by calling claim_member_identity(), which only
+-- claims an UNCLAIMED row -- so they need the roster unclaimed, and a database
+-- that has ever been signed into from a browser does not have one. Those tests
+-- start by releasing the mapping with the guard trigger off:
+--
+--   alter table public.member disable trigger member_guard_privileged_columns;
+--
+-- The guard lets only an admin move an auth mapping and there is no admin
+-- session yet, so this fixture cannot be built through the front door. The
+-- trigger goes straight back on before anything is actually under test, and
+-- the whole transaction rolls back regardless.
 
 \set ON_ERROR_STOP on
 
@@ -194,7 +206,11 @@ do $$
 declare
   v_count int;
 begin
-  -- The seed leaves the roster unclaimed, so sign in the way the app does.
+  -- Release the roster (see the header), then sign in the way the app does.
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set auth_user_id = null;
+  alter table public.member enable trigger member_guard_privileged_columns;
+
   perform set_config('role', 'authenticated', true);
   perform set_config('request.jwt.claims',
     '{"sub":"00000000-0000-0000-0000-0000000a0001",
@@ -221,6 +237,10 @@ do $$
 declare
   v_member uuid;
 begin
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set auth_user_id = null;
+  alter table public.member enable trigger member_guard_privileged_columns;
+
   perform set_config('role', 'authenticated', true);
   perform set_config('request.jwt.claims',
     '{"sub":"00000000-0000-0000-0000-0000000a0007",
@@ -273,6 +293,10 @@ declare
 begin
   -- Fixture built only from legitimate paths: both members claim their own row,
   -- then the admin demotes the other one to pilot.
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set auth_user_id = null;
+  alter table public.member enable trigger member_guard_privileged_columns;
+
   perform set_config('role', 'authenticated', true);
 
   perform set_config('request.jwt.claims',
@@ -608,6 +632,10 @@ do $$
 begin
   -- Fixture from legitimate paths only: both owners claim their row, then the
   -- admin demotes the second to pilot.
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set auth_user_id = null;
+  alter table public.member enable trigger member_guard_privileged_columns;
+
   perform set_config('role', 'authenticated', true);
 
   perform set_config('request.jwt.claims',
@@ -811,6 +839,10 @@ declare
   v_read int;
   v_rows int;
 begin
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set auth_user_id = null;
+  alter table public.member enable trigger member_guard_privileged_columns;
+
   perform set_config('role', 'authenticated', true);
 
   perform set_config('request.jwt.claims',
@@ -844,6 +876,490 @@ begin
     raise exception 'FAIL  a pilot repriced % rate component(s)', v_rows;
   end if;
   raise notice 'PASS  a pilot can read rates but not change them';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 17. A flight's hours are derived, never typed. The two rounding rules differ
+--     on purpose -- billed rounds up because it is a charge, est tach rounds to
+--     nearest because it is an engine-life estimate -- and both must be taken
+--     from the exact interval rather than from the already-rounded
+--     flight_hours column.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_flight public.flight;
+begin
+  -- Still running: there is nothing to bill yet.
+  insert into public.flight (aircraft_id, pilot_member_id, start_at)
+  values ('00000000-0000-0000-0000-0000000ac001',
+          '00000000-0000-0000-0000-00000000a001',
+          timestamptz '2026-10-12 19:03:00-07')
+  returning * into v_flight;
+
+  if v_flight.billed_hours is not null or v_flight.est_tach_hours is not null then
+    raise exception 'FAIL  a running flight already bills % hr', v_flight.billed_hours;
+  end if;
+  -- The snapshot is taken at insert, from the aircraft, without the caller
+  -- having to remember it.
+  if v_flight.tach_factor_used <> 1.300 then
+    raise exception 'FAIL  tach factor snapshot is %', v_flight.tach_factor_used;
+  end if;
+
+  -- Stopping the clock prices it: one hour, 1/1.3 = 0.769 -> 0.8 tach.
+  update public.flight set end_at = timestamptz '2026-10-12 20:03:00-07'
+   where id = v_flight.id returning * into v_flight;
+
+  if (v_flight.flight_hours, v_flight.billed_hours, v_flight.est_tach_hours)
+     is distinct from (1.00, 1.00, 0.80) then
+    raise exception 'FAIL  one hour priced as %/%/%',
+      v_flight.flight_hours, v_flight.billed_hours, v_flight.est_tach_hours;
+  end if;
+
+  -- The double-rounding trap. 2537 s is 0.704722 hr, which flight_hours stores
+  -- as 0.70. Rounding that up gives 0.7; rounding the exact value up gives 0.8,
+  -- and 0.8 is what the owner is owed.
+  update public.flight
+     set end_at = v_flight.start_at + interval '2537 seconds'
+   where id = v_flight.id returning * into v_flight;
+
+  if v_flight.flight_hours is distinct from 0.70 then
+    raise exception 'FAIL  2537 s stored as % hr', v_flight.flight_hours;
+  end if;
+  if v_flight.billed_hours is distinct from 0.80 then
+    raise exception 'FAIL  0.7047 hr billed as % -- rounded twice', v_flight.billed_hours;
+  end if;
+
+  -- The 48-minute worked example from the Confirm screen.
+  update public.flight set end_at = v_flight.start_at + interval '48 minutes'
+   where id = v_flight.id returning * into v_flight;
+  if (v_flight.billed_hours, v_flight.est_tach_hours) is distinct from (0.80, 0.60) then
+    raise exception 'FAIL  48 min priced as % billed / % tach',
+      v_flight.billed_hours, v_flight.est_tach_hours;
+  end if;
+
+  -- Retuning the aircraft's factor must not restate a flight already logged.
+  update public.aircraft set tach_factor = 1.500
+   where id = '00000000-0000-0000-0000-0000000ac001';
+  update public.flight set notes = 'touch'
+   where id = v_flight.id returning * into v_flight;
+
+  if v_flight.tach_factor_used is distinct from 1.300
+     or v_flight.est_tach_hours is distinct from 0.60 then
+    raise exception 'FAIL  retuning the factor restated the flight to %/% ',
+      v_flight.tach_factor_used, v_flight.est_tach_hours;
+  end if;
+
+  raise notice 'PASS  flight hours are derived, snapshot and rounded per rule';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 18. One clock per aeroplane. Two pilots cannot both be flying it, and a
+--     double-tapped Start must not open a second flight. The partial unique
+--     index is the real guard; timer_start turns it into an explanation.
+-- ===========================================================================
+begin;
+
+insert into public.api_token (member_id, token_hash, label) values
+  ('00000000-0000-0000-0000-00000000a001', repeat('a', 64), 'owner one'),
+  ('00000000-0000-0000-0000-00000000a002', repeat('b', 64), 'owner two');
+
+do $$
+declare
+  v_first   public.flight;
+  v_again   public.flight;
+  v_blocked text;
+  v_count   int;
+begin
+  v_first := public.timer_start(repeat('a', 64));
+
+  -- Same pilot taps Start twice: their own running flight comes back.
+  v_again := public.timer_start(repeat('a', 64));
+  if v_again.id <> v_first.id then
+    raise exception 'FAIL  a second Start opened flight %', v_again.id;
+  end if;
+
+  -- The other owner cannot start one on top of it, and cannot stop it either.
+  begin
+    perform public.timer_start(repeat('b', 64));
+    v_blocked := null;
+  exception when others then v_blocked := sqlstate;
+  end;
+  if v_blocked is distinct from '55006' then
+    raise exception 'FAIL  a second pilot started on a flying aeroplane (%)', v_blocked;
+  end if;
+
+  begin
+    perform public.timer_stop(repeat('b', 64));
+    v_blocked := null;
+  exception when others then v_blocked := sqlstate;
+  end;
+  if v_blocked is distinct from '42501' then
+    raise exception 'FAIL  a second pilot stopped another pilot''s flight (%)', v_blocked;
+  end if;
+
+  -- And the index itself, not just the function that avoids tripping it.
+  begin
+    insert into public.flight (aircraft_id, pilot_member_id, tach_factor_used)
+    values ('00000000-0000-0000-0000-0000000ac001',
+            '00000000-0000-0000-0000-00000000a002', 1.300);
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  a direct insert opened a second running flight';
+  end if;
+
+  select count(*) into v_count from public.flight where end_at is null;
+  if v_count <> 1 then
+    raise exception 'FAIL  % flights are running', v_count;
+  end if;
+
+  -- now() is the TRANSACTION timestamp, so a start and a stop in one
+  -- transaction would land on the same instant and fail the ends-after-start
+  -- check. In the app they are separate requests; here the clock is wound back.
+  update public.flight set start_at = start_at - interval '30 minutes'
+   where id = v_first.id;
+
+  -- Stopping leaves it a draft for the Confirm screen, not confirmed.
+  v_again := public.timer_stop(repeat('a', 64));
+  if v_again.id <> v_first.id or v_again.status <> 'draft' then
+    raise exception 'FAIL  stop returned flight % as %', v_again.id, v_again.status;
+  end if;
+  if v_again.end_at is null then
+    raise exception 'FAIL  the clock is still running after Stop';
+  end if;
+
+  -- Stopping again has nothing to stop; it must say so rather than invent one.
+  begin
+    perform public.timer_stop(repeat('a', 64));
+    v_blocked := null;
+  exception when others then v_blocked := sqlstate;
+  end;
+  if v_blocked is distinct from '55006' then
+    raise exception 'FAIL  Stop on a parked aeroplane gave %', v_blocked;
+  end if;
+
+  raise notice 'PASS  one clock per aeroplane, and only its pilot stops it';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 19. A retry is not a second flight. The Shortcut fires over a flaky
+--     connection, so the same idempotency key must return the same row --
+--     including after the flight has been stopped, when the aeroplane no
+--     longer has a running flight to fall back on.
+-- ===========================================================================
+begin;
+
+insert into public.api_token (member_id, token_hash, label)
+values ('00000000-0000-0000-0000-00000000a001', repeat('c', 64), 'shortcut');
+
+do $$
+declare
+  v_a     public.flight;
+  v_b     public.flight;
+  v_count int;
+begin
+  v_a := public.timer_start(repeat('c', 64), 48.65, -123.4, 12, 'key-start-1');
+  -- Wind the clock back, because now() does not move within a transaction.
+  update public.flight set start_at = start_at - interval '30 minutes'
+   where id = v_a.id;
+  v_b := public.timer_stop (repeat('c', 64), 48.42, -123.37, 9, 'key-stop-1');
+
+  -- Replay both, in the state the app is actually in: parked.
+  v_b := public.timer_start(repeat('c', 64), 48.65, -123.4, 12, 'key-start-1');
+  if v_b.id <> v_a.id then
+    raise exception 'FAIL  a replayed Start opened flight %', v_b.id;
+  end if;
+  v_b := public.timer_stop(repeat('c', 64), 48.42, -123.37, 9, 'key-stop-1');
+  if v_b.id <> v_a.id then
+    raise exception 'FAIL  a replayed Stop touched flight %', v_b.id;
+  end if;
+
+  select count(*) into v_count from public.flight;
+  if v_count <> 1 then
+    raise exception 'FAIL  four calls left % flights', v_count;
+  end if;
+
+  -- Both fixes were recorded, and the replay did not duplicate them.
+  select count(*) into v_count from public.flight_fix where flight_id = v_a.id;
+  if v_count <> 2 then
+    raise exception 'FAIL  % GPS fix(es) recorded', v_count;
+  end if;
+
+  -- The flight row carries the non-identifying metadata; the coordinates do
+  -- not live here.
+  select * into v_b from public.flight where id = v_a.id;
+  if v_b.start_fix_at is null or v_b.start_fix_accuracy_m is distinct from 12 then
+    raise exception 'FAIL  start fix metadata is %/%',
+      v_b.start_fix_at, v_b.start_fix_accuracy_m;
+  end if;
+
+  raise notice 'PASS  replayed timer calls return the same flight';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 20. SPEC.md 4.2: a fix taken at Stop can be a home address. The flight log is
+--     shared, the coordinates are not. This is why the fixes are rows and not
+--     columns -- RLS cannot restrict a column.
+-- ===========================================================================
+begin;
+
+insert into public.flight (id, aircraft_id, pilot_member_id, tach_factor_used,
+                           start_at, end_at, start_fix_at, start_fix_accuracy_m)
+values ('00000000-0000-0000-0000-00000000b001',
+        '00000000-0000-0000-0000-0000000ac001',
+        '00000000-0000-0000-0000-00000000a001', 1.300,
+        timestamptz '2026-10-12 19:03:00-07',
+        timestamptz '2026-10-12 20:03:00-07',
+        timestamptz '2026-10-12 19:03:00-07', 12);
+
+insert into public.flight_fix (flight_id, which, lat, lon, accuracy_m)
+values ('00000000-0000-0000-0000-00000000b001', 'start', 48.650000, -123.400000, 12);
+
+do $$
+declare
+  v_flights int;
+  v_fixes   int;
+  v_billed  numeric;
+  v_blocked text;
+begin
+  -- Fixture from legitimate paths only: both owners claim their row, then the
+  -- admin demotes the second to pilot.
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set auth_user_id = null;
+  alter table public.member enable trigger member_guard_privileged_columns;
+
+  perform set_config('role', 'authenticated', true);
+
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0020",
+      "email":"owner2@example.test"}', true);
+  perform public.claim_member_identity();
+
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0021",
+      "email":"owner1@example.test"}', true);
+  perform public.claim_member_identity();
+
+  update public.member set role = 'pilot'
+   where id = '00000000-0000-0000-0000-00000000a002';
+
+  perform set_config('request.jwt.claims',
+                     '{"sub":"00000000-0000-0000-0000-0000000a0020"}', true);
+
+  -- The co-owner can read the flight -- who flew, when, and what it cost.
+  select count(*), max(billed_hours) into v_flights, v_billed
+  from public.flight where id = '00000000-0000-0000-0000-00000000b001';
+
+  -- But not where the aeroplane was.
+  select count(*) into v_fixes from public.flight_fix;
+
+  -- Nor can they plant one on someone else's flight. A with-check violation
+  -- raises rather than filtering, so this is caught rather than counted.
+  begin
+    insert into public.flight_fix (flight_id, which, lat, lon)
+    values ('00000000-0000-0000-0000-00000000b001', 'end', 0, 0);
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+
+  perform set_config('role', 'postgres', true);
+
+  if v_flights <> 1 or v_billed is distinct from 1.00 then
+    raise exception 'FAIL  a co-owner read % flight(s) billing %', v_flights, v_billed;
+  end if;
+  if v_fixes <> 0 then
+    raise exception 'FAIL  a co-owner read % GPS fix(es)', v_fixes;
+  end if;
+  if v_blocked is null then
+    raise exception 'FAIL  a co-owner wrote a fix onto another pilot''s flight';
+  end if;
+
+  -- "Discard the raw end fix" must not erase the flight's own history: the
+  -- accuracy and timing stay on the flight row, which is why they are columns
+  -- there rather than only on the fix.
+  delete from public.flight_fix
+   where flight_id = '00000000-0000-0000-0000-00000000b001';
+
+  -- `is distinct from`, not `<>`: erasing the column leaves NULL, and NULL <> 12
+  -- is NULL, which would skip the RAISE and let this pass vacuously.
+  if (select start_fix_accuracy_m from public.flight
+       where id = '00000000-0000-0000-0000-00000000b001') is distinct from 12 then
+    raise exception 'FAIL  discarding a fix erased the flight''s fix metadata';
+  end if;
+
+  raise notice 'PASS  the flight log is shared, the coordinates are not';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 21. SPEC.md 4.6: once a month is closed the flights behind the bill are
+--     frozen, and a correction becomes an adjustment. Notes stay editable --
+--     remembering where you went is not repricing the flight.
+-- ===========================================================================
+begin;
+
+insert into public.invoice (id, company_id, member_id, period_month, status, number, issued_at)
+values ('00000000-0000-0000-0000-00000000f007',
+        '00000000-0000-0000-0000-00000000c000',
+        '00000000-0000-0000-0000-00000000a001',
+        date '2026-11-01', 'issued', 9401, now());
+
+insert into public.flight (id, aircraft_id, pilot_member_id, tach_factor_used,
+                           start_at, end_at, status, invoice_id)
+values ('00000000-0000-0000-0000-00000000b002',
+        '00000000-0000-0000-0000-0000000ac001',
+        '00000000-0000-0000-0000-00000000a001', 1.300,
+        timestamptz '2026-11-02 10:00:00-08',
+        timestamptz '2026-11-02 11:00:00-08',
+        'billed', '00000000-0000-0000-0000-00000000f007');
+
+do $$
+declare
+  v_blocked text;
+begin
+  begin
+    update public.flight set end_at = timestamptz '2026-11-02 13:00:00-08'
+     where id = '00000000-0000-0000-0000-00000000b002';
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  a billed flight was re-timed';
+  end if;
+
+  begin
+    update public.flight set pilot_member_id = '00000000-0000-0000-0000-00000000a002'
+     where id = '00000000-0000-0000-0000-00000000b002';
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  a billed flight was moved to another pilot';
+  end if;
+
+  begin
+    delete from public.flight where id = '00000000-0000-0000-0000-00000000b002';
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  a billed flight was deleted';
+  end if;
+
+  -- Still a logbook: the notes and the tach reading may be filled in later.
+  update public.flight set notes = 'Ganges and back', actual_tach_hours = 1234.5
+   where id = '00000000-0000-0000-0000-00000000b002';
+
+  -- A billed flight must keep its invoice, and an unbilled one must not have
+  -- an invoice at all. The constraint is an equivalence in both directions.
+  begin
+    insert into public.flight (aircraft_id, pilot_member_id, tach_factor_used,
+                               start_at, end_at, status, invoice_id)
+    values ('00000000-0000-0000-0000-0000000ac001',
+            '00000000-0000-0000-0000-00000000a001', 1.300,
+            timestamptz '2026-11-03 10:00:00-08',
+            timestamptz '2026-11-03 11:00:00-08',
+            'confirmed', '00000000-0000-0000-0000-00000000f007');
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  an unbilled flight was attached to an invoice';
+  end if;
+
+  -- And a flight cannot be confirmed while the clock is still running.
+  begin
+    insert into public.flight (aircraft_id, pilot_member_id, tach_factor_used, status)
+    values ('00000000-0000-0000-0000-0000000ac001',
+            '00000000-0000-0000-0000-00000000a001', 1.300, 'confirmed');
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  a flight was confirmed with no end time';
+  end if;
+
+  raise notice 'PASS  a billed flight is frozen except for its notes';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 22. The token is the whole credential, so every way it can be invalid has to
+--     fail the same way -- and a token hash is a credential digest no other
+--     owner should hold, admin or not.
+-- ===========================================================================
+begin;
+
+insert into public.api_token (member_id, token_hash, label, revoked_at) values
+  ('00000000-0000-0000-0000-00000000a001', repeat('d', 64), 'live',    null),
+  ('00000000-0000-0000-0000-00000000a001', repeat('e', 64), 'revoked', now());
+
+do $$
+declare
+  v_state text;
+  v_seen  int;
+begin
+  foreach v_state in array array[repeat('e', 64), repeat('f', 64), 'short', null]
+  loop
+    begin
+      perform public.member_for_token_hash(v_state);
+      raise exception 'FAIL  token % was accepted', coalesce(v_state, 'null');
+    exception when sqlstate '28000' then
+      null;
+    end;
+  end loop;
+
+  -- The live one still works, so the test above is not passing vacuously.
+  if public.member_for_token_hash(repeat('d', 64))
+     <> '00000000-0000-0000-0000-00000000a001' then
+    raise exception 'FAIL  a live token did not resolve to its member';
+  end if;
+
+  -- A deactivated member's token stops working without anyone revoking it.
+  -- Deactivating is an admin action and there is no admin session here, so the
+  -- guard comes off for the fixture the same way as above.
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set is_active = false
+   where id = '00000000-0000-0000-0000-00000000a001';
+  alter table public.member enable trigger member_guard_privileged_columns;
+
+  begin
+    perform public.member_for_token_hash(repeat('d', 64));
+    raise exception 'FAIL  a deactivated member''s token still works';
+  exception when sqlstate '28000' then
+    null;
+  end;
+
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set is_active = true
+   where id = '00000000-0000-0000-0000-00000000a001';
+  alter table public.member enable trigger member_guard_privileged_columns;
+
+  -- The other owner is an admin, and still must not see the digest.
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set auth_user_id = null;
+  alter table public.member enable trigger member_guard_privileged_columns;
+
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0022",
+      "email":"owner2@example.test"}', true);
+  perform public.claim_member_identity();
+
+  select count(*) into v_seen from public.api_token;
+
+  perform set_config('role', 'postgres', true);
+
+  if v_seen <> 0 then
+    raise exception 'FAIL  an admin read % of another owner''s token digests', v_seen;
+  end if;
+  raise notice 'PASS  only a live token authenticates, and digests stay private';
 end $$;
 rollback;
 

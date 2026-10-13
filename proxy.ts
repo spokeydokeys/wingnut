@@ -48,7 +48,11 @@ export async function proxy(request: NextRequest) {
   const isPublic =
     pathname === "/login" ||
     pathname === "/no-access" ||
-    pathname.startsWith("/auth/");
+    pathname.startsWith("/auth/") ||
+    // The timer endpoints carry a bearer token and no cookie, so there is never
+    // a session here to find. Redirecting a Shortcut to an HTML login page
+    // would turn a 401 into a confusing 200. They authenticate themselves.
+    pathname.startsWith("/api/timer/");
 
   if (!user && !isPublic) {
     const url = request.nextUrl.clone();

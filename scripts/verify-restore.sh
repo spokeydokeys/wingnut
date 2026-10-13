@@ -59,6 +59,8 @@ declare
   v_count       int;
   v_max         numeric;
   v_unprotected text;
+  v_flight      public.flight;
+  v_again       public.flight;
 begin
   select count(*) into v_tables
   from pg_tables
@@ -66,11 +68,12 @@ begin
     and tablename in ('company','member','aircraft','ownership_period','ownership_share',
                       'gl_account','rate_schedule','rate_component',
                       'fixed_cost_schedule','fixed_cost',
-                      'invoice','invoice_counter','ledger_entry');
-  if v_tables <> 13 then
-    raise exception 'FAIL  expected 13 core tables, found %', v_tables;
+                      'invoice','invoice_counter','ledger_entry',
+                      'place','flight','flight_fix','api_token');
+  if v_tables <> 17 then
+    raise exception 'FAIL  expected 17 core tables, found %', v_tables;
   end if;
-  raise notice 'PASS  all 13 core tables restored';
+  raise notice 'PASS  all 17 core tables restored';
 
   -- Assert the security-meaningful property rather than a magic total: no core
   -- table may come back without RLS enabled and at least one policy. A dump
@@ -85,7 +88,8 @@ begin
     and t.tablename in ('company','member','aircraft','ownership_period','ownership_share',
                         'gl_account','rate_schedule','rate_component',
                         'fixed_cost_schedule','fixed_cost',
-                        'invoice','ledger_entry')
+                        'invoice','ledger_entry',
+                        'place','flight','flight_fix','api_token')
     and (
       not t.rowsecurity
       or not exists (
@@ -107,13 +111,13 @@ begin
   end if;
 
   -- security_invoker is an attribute of the view, so it has to survive the dump
-  -- too. If it came back off, the restored instance would run both views as
+  -- too. If it came back off, the restored instance would run these views as
   -- their owner and show every owner the whole pool's ledger.
   select string_agg(c.relname, ', ' order by c.relname) into v_unprotected
   from pg_class c
   join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public'
-    and c.relname in ('ledger_entry_posted','gl_journal')
+    and c.relname in ('ledger_entry_posted','gl_journal','flight_running')
     -- Parsed rather than string-matched: Postgres stores the option as it was
     -- written, so this is 'on' here and could equally be 'true'.
     and not coalesce((
@@ -247,6 +251,53 @@ begin
   end if;
 
   raise notice 'PASS  the ledger bills and balances on vanilla Postgres';
+
+  -- The timer is the one thing an owner touches every flight, so prove it flies
+  -- on the restored instance: token auth, the one-open-flight index, the
+  -- derived-hours trigger and both rounding rules, end to end.
+  insert into public.api_token (member_id, token_hash, label)
+  values ('00000000-0000-0000-0000-0000000a00f0', repeat('9', 64), 'restore check');
+
+  v_flight := public.timer_start(repeat('9', 64), 48.65, -123.4, 12);
+  if v_flight.end_at is not null or v_flight.billed_hours is not null then
+    raise exception 'FAIL  a freshly started flight is already finished';
+  end if;
+
+  -- A second Start must not open a second flight.
+  v_again := public.timer_start(repeat('9', 64));
+  if v_again.id <> v_flight.id then
+    raise exception 'FAIL  a second Start opened another flight after restore';
+  end if;
+
+  -- now() is the transaction timestamp, so wind the clock back 48 minutes
+  -- rather than trying to let time pass inside a single transaction.
+  update public.flight set start_at = start_at - interval '48 minutes'
+   where id = v_flight.id;
+
+  v_flight := public.timer_stop(repeat('9', 64), 48.42, -123.37, 9);
+
+  -- 0.8 hr exactly: billed rounds up to 0.8, tach is 0.8/1.3 = 0.615 -> 0.6.
+  if (v_flight.billed_hours, v_flight.est_tach_hours, v_flight.tach_factor_used)
+     is distinct from (0.80, 0.60, 1.300) then
+    raise exception 'FAIL  a 48 minute flight priced as %/% on factor % after restore',
+      v_flight.billed_hours, v_flight.est_tach_hours, v_flight.tach_factor_used;
+  end if;
+
+  select count(*) into v_count from public.flight_fix where flight_id = v_flight.id;
+  if v_count <> 2 then
+    raise exception 'FAIL  % GPS fix(es) stored after restore', v_count;
+  end if;
+
+  -- A revoked token must stop working, or the escape hatch leaks a credential.
+  update public.api_token set revoked_at = now() where token_hash = repeat('9', 64);
+  begin
+    perform public.member_for_token_hash(repeat('9', 64));
+    raise exception 'FAIL  a revoked token still authenticated after restore';
+  exception when others then
+    if sqlerrm like 'FAIL%' then raise; end if;
+  end;
+
+  raise notice 'PASS  the flight timer runs on vanilla Postgres';
 end $$;
 SQL
 
