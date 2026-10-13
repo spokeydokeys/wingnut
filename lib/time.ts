@@ -84,6 +84,54 @@ export function toDateInputValue(at: Date = new Date()): string {
 }
 
 /**
+ * `2026-10-01` -- the calendar date an instant fell on, where the aeroplane is.
+ *
+ * The TypeScript twin of `public.aircraft_date(timestamptz)`. Slicing the ISO
+ * string instead would give the UTC date, and an invoice issued at 6pm in
+ * Victoria would be dated the following day.
+ */
+export function toAircraftDate(iso: string): string {
+  return toDateInputValue(new Date(iso));
+}
+
+/**
+ * `2026-10-01` -- the first of the month it is now, where the aeroplane is.
+ *
+ * The zone matters: a bill is for a calendar month at the aircraft's base, and
+ * on the evening of the 31st `new Date()` is already next month in UTC. This is
+ * the TypeScript side of `public.aircraft_today()`.
+ */
+export function currentMonthStart(at: Date = new Date()): string {
+  return `${toDateInputValue(at).slice(0, 7)}-01`;
+}
+
+/**
+ * `October` -- the month a `YYYY-MM-DD` falls in, for a heading.
+ *
+ * Calendar arithmetic on a plain date, so UTC throughout and no zone in sight;
+ * see formatDate above for why reading one as an instant would be wrong.
+ */
+export function formatMonthLong(isoDate: string): string {
+  const [y, m] = isoDate.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC",
+    month: "long",
+  }).format(new Date(Date.UTC(y, m - 1, 1)));
+}
+
+/** `31 Oct` -- the last day of that month, for "closes on". */
+export function formatMonthEnd(isoDate: string): string {
+  const [y, m] = isoDate.split("-").map(Number);
+  // Day 0 of the following month is the last day of this one, which saves
+  // knowing anything about February.
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC",
+    day: "numeric",
+    month: "short",
+  }).format(new Date(Date.UTC(y, m, 0)));
+}
+
+/**
  * `2026-10-12T08:14`, the only shape `<input type="datetime-local">` accepts.
  *
  * Note that the input itself has no time zone: whatever string goes in comes

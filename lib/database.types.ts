@@ -47,14 +47,14 @@ isOneToOne: false
                   ]
                 },"company": {
                   Row: {
-                    "ar_account_code": string | null,"bank_account_code": string | null,"created_at": string,"etransfer_recipient": string | null,"fiscal_year_end_month": number,"gst_number": string | null,"gst_registered": boolean,"id": string,"legal_name": string,"updated_at": string
+                    "ar_account_code": string | null,"bank_account_code": string | null,"created_at": string,"etransfer_recipient": string | null,"fiscal_year_end_month": number,"gst_number": string | null,"gst_rate": number,"gst_registered": boolean,"id": string,"legal_name": string,"updated_at": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "ar_account_code"?: string | null,"bank_account_code"?: string | null,"created_at"?: string,"etransfer_recipient"?: string | null,"fiscal_year_end_month"?: number,"gst_number"?: string | null,"gst_registered"?: boolean,"id"?: string,"legal_name": string,"updated_at"?: string
+                    "ar_account_code"?: string | null,"bank_account_code"?: string | null,"created_at"?: string,"etransfer_recipient"?: string | null,"fiscal_year_end_month"?: number,"gst_number"?: string | null,"gst_rate"?: number,"gst_registered"?: boolean,"id"?: string,"legal_name": string,"updated_at"?: string
                   }
                   Update: {
-                    "ar_account_code"?: string | null,"bank_account_code"?: string | null,"created_at"?: string,"etransfer_recipient"?: string | null,"fiscal_year_end_month"?: number,"gst_number"?: string | null,"gst_registered"?: boolean,"id"?: string,"legal_name"?: string,"updated_at"?: string
+                    "ar_account_code"?: string | null,"bank_account_code"?: string | null,"created_at"?: string,"etransfer_recipient"?: string | null,"fiscal_year_end_month"?: number,"gst_number"?: string | null,"gst_rate"?: number,"gst_registered"?: boolean,"id"?: string,"legal_name"?: string,"updated_at"?: string
                   }
                   Relationships: [
                     
@@ -237,14 +237,14 @@ isOneToOne: true
                   ]
                 },"ledger_entry": {
                   Row: {
-                    "amount": number,"company_id": string,"created_at": string,"description": string,"entry_date": string,"external_ref": string | null,"gl_account_code": string,"gst_amount": number,"id": string,"invoice_id": string | null,"kind": Database["public"]['Enums']["ledger_entry_kind"],"member_id": string,"quantity": number | null,"synced_at": string | null,"tax_treatment": Database["public"]['Enums']["tax_treatment"],"unit_rate": number | null
+                    "amount": number,"company_id": string,"created_at": string,"description": string,"entry_date": string,"external_ref": string | null,"gl_account_code": string,"gst_amount": number,"id": string,"invoice_id": string | null,"kind": Database["public"]['Enums']["ledger_entry_kind"],"member_id": string,"quantity": number | null,"recorded_by": string | null,"synced_at": string | null,"tax_treatment": Database["public"]['Enums']["tax_treatment"],"unit_rate": number | null
                   }
                   ComputedFields: never
                   Insert: {
-                    "amount": number,"company_id": string,"created_at"?: string,"description": string,"entry_date": string,"external_ref"?: string | null,"gl_account_code": string,"gst_amount"?: number,"id"?: string,"invoice_id"?: string | null,"kind": Database["public"]['Enums']["ledger_entry_kind"],"member_id": string,"quantity"?: number | null,"synced_at"?: string | null,"tax_treatment"?: Database["public"]['Enums']["tax_treatment"],"unit_rate"?: number | null
+                    "amount": number,"company_id": string,"created_at"?: string,"description": string,"entry_date": string,"external_ref"?: string | null,"gl_account_code": string,"gst_amount"?: number,"id"?: string,"invoice_id"?: string | null,"kind": Database["public"]['Enums']["ledger_entry_kind"],"member_id": string,"quantity"?: number | null,"recorded_by"?: string | null,"synced_at"?: string | null,"tax_treatment"?: Database["public"]['Enums']["tax_treatment"],"unit_rate"?: number | null
                   }
                   Update: {
-                    "amount"?: number,"company_id"?: string,"created_at"?: string,"description"?: string,"entry_date"?: string,"external_ref"?: string | null,"gl_account_code"?: string,"gst_amount"?: number,"id"?: string,"invoice_id"?: string | null,"kind"?: Database["public"]['Enums']["ledger_entry_kind"],"member_id"?: string,"quantity"?: number | null,"synced_at"?: string | null,"tax_treatment"?: Database["public"]['Enums']["tax_treatment"],"unit_rate"?: number | null
+                    "amount"?: number,"company_id"?: string,"created_at"?: string,"description"?: string,"entry_date"?: string,"external_ref"?: string | null,"gl_account_code"?: string,"gst_amount"?: number,"id"?: string,"invoice_id"?: string | null,"kind"?: Database["public"]['Enums']["ledger_entry_kind"],"member_id"?: string,"quantity"?: number | null,"recorded_by"?: string | null,"synced_at"?: string | null,"tax_treatment"?: Database["public"]['Enums']["tax_treatment"],"unit_rate"?: number | null
                   }
                   Relationships: [
                     {
@@ -268,6 +268,12 @@ isOneToOne: false
     },{
       foreignKeyName: "ledger_entry_member_id_fkey"
       columns: ["member_id"]
+isOneToOne: false
+      referencedRelation: "member"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "ledger_entry_recorded_by_fkey"
+      columns: ["recorded_by"]
 isOneToOne: false
       referencedRelation: "member"
       referencedColumns: ["id"]
@@ -649,7 +655,10 @@ isOneToOne: false
                 }
           }
           Functions: {
-            "aircraft_tach_estimate":
+            "aircraft_date":
+{ Args: { "p_at": string }; Returns: string
+                           },
+"aircraft_tach_estimate":
 { Args: { "p_aircraft_id": string }; Returns: number
                            },
 "aircraft_today":
@@ -658,11 +667,17 @@ isOneToOne: false
 "claim_member_identity":
 { Args: Record<PropertyKey, never>; Returns: string
                            },
+"close_month":
+{ Args: { "p_aircraft_id": string,"p_month": string }; Returns: number
+                           },
 "current_auth_email":
 { Args: Record<PropertyKey, never>; Returns: string
                            },
 "current_member_id":
 { Args: Record<PropertyKey, never>; Returns: string
+                           },
+"fixed_cost_share":
+{ Args: { "p_aircraft_id": string,"p_member_id": string,"p_month": string }; Returns: number
                            },
 "fixed_costs_as_of":
 { Args: { "p_aircraft_id": string,"p_on": string }; Returns: {
@@ -675,11 +690,22 @@ isOneToOne: false
 "is_admin":
 { Args: Record<PropertyKey, never>; Returns: boolean
                            },
+"issue_invoice":
+{ Args: { "p_invoice_id": string }; Returns: number
+                           },
 "member_balance":
 { Args: { "p_member_id": string }; Returns: number
                            },
 "member_for_token_hash":
 { Args: { "p_token_hash": string }; Returns: string
+                           },
+"month_charges":
+{ Args: { "p_aircraft_id": string,"p_member_id": string,"p_month": string }; Returns: {
+              "amount": number,"description": string,"gl_account_code": string,"gst_amount": number,"kind": Database["public"]['Enums']["ledger_entry_kind"],"period_hours": number,"quantity": number,"sort_order": number,"tax_treatment": Database["public"]['Enums']["tax_treatment"],"unit_rate": number
+            }[]
+                           },
+"month_flight_ids":
+{ Args: { "p_aircraft_id": string,"p_member_id": string,"p_month": string }; Returns: string[]
                            },
 "next_invoice_number":
 { Args: { "p_company_id": string }; Returns: number
@@ -696,6 +722,9 @@ isOneToOne: false
                            },
 "rate_schedule_as_of":
 { Args: { "p_aircraft_id": string,"p_on": string }; Returns: string
+                           },
+"record_payment":
+{ Args: { "p_amount": number,"p_member_id": string,"p_note"?: string,"p_paid_on": string }; Returns: string
                            },
 "round_hours":
 { Args: { "p_hours": number,"p_rule": Database["public"]['Enums']["hour_rounding"] }; Returns: number

@@ -412,32 +412,38 @@ rollback;
 --     toward a balance until it is issued, and a void invoice never counts.
 -- ===========================================================================
 begin;
-
-insert into public.invoice (id, company_id, member_id, period_month)
-values ('00000000-0000-0000-0000-00000000f001',
-        '00000000-0000-0000-0000-00000000c000',
-        '00000000-0000-0000-0000-00000000a001',
-        date '2026-03-01');
-
-insert into public.ledger_entry
-  (company_id, member_id, invoice_id, kind, entry_date, description,
-   quantity, unit_rate, amount, gl_account_code)
-values ('00000000-0000-0000-0000-00000000c000',
-        '00000000-0000-0000-0000-00000000a001',
-        '00000000-0000-0000-0000-00000000f001',
-        'flight_charge', date '2026-03-15', '3.5 hr x $285.00',
-        3.5, 285.0000, 997.50, '4100');
-
 do $$
 declare
+  v_base    numeric;
   v_balance numeric;
   v_total   numeric;
 begin
+  -- Measured as a CHANGE from where the member already stood, not against
+  -- zero. The seed carries a closed September and an open October, so "the
+  -- balance is zero" was only ever true of an empty database, and an absolute
+  -- figure here would have to be rewritten every time the seed grows.
+  v_base := public.member_balance('00000000-0000-0000-0000-00000000a001');
+
+  insert into public.invoice (id, company_id, member_id, period_month)
+  values ('00000000-0000-0000-0000-00000000f001',
+          '00000000-0000-0000-0000-00000000c000',
+          '00000000-0000-0000-0000-00000000a001',
+          date '2026-03-01');
+
+  insert into public.ledger_entry
+    (company_id, member_id, invoice_id, kind, entry_date, description,
+     quantity, unit_rate, amount, gl_account_code)
+  values ('00000000-0000-0000-0000-00000000c000',
+          '00000000-0000-0000-0000-00000000a001',
+          '00000000-0000-0000-0000-00000000f001',
+          'flight_charge', date '2026-03-15', '3.5 hr x $285.00',
+          3.5, 285.0000, 997.50, '4100');
+
   v_balance := public.member_balance('00000000-0000-0000-0000-00000000a001');
   v_total   := public.invoice_total('00000000-0000-0000-0000-00000000f001');
 
-  if v_balance <> 0 then
-    raise exception 'FAIL  a draft invoice moved the balance to %', v_balance;
+  if v_balance <> v_base then
+    raise exception 'FAIL  a draft invoice moved the balance by %', v_balance - v_base;
   end if;
   -- The draft total is still readable; it is what the review screen shows.
   if v_total <> 997.50 then
@@ -451,16 +457,16 @@ begin
    where id = '00000000-0000-0000-0000-00000000f001';
 
   v_balance := public.member_balance('00000000-0000-0000-0000-00000000a001');
-  if v_balance <> 997.50 then
-    raise exception 'FAIL  issuing left the balance at %', v_balance;
+  if v_balance <> v_base + 997.50 then
+    raise exception 'FAIL  issuing moved the balance by %', v_balance - v_base;
   end if;
 
   update public.invoice set status = 'void'
    where id = '00000000-0000-0000-0000-00000000f001';
 
   v_balance := public.member_balance('00000000-0000-0000-0000-00000000a001');
-  if v_balance <> 0 then
-    raise exception 'FAIL  a void invoice still owes %', v_balance;
+  if v_balance <> v_base then
+    raise exception 'FAIL  a void invoice still owes %', v_balance - v_base;
   end if;
 
   raise notice 'PASS  only an issued invoice counts toward a balance';
@@ -684,15 +690,22 @@ begin
   perform set_config('request.jwt.claims',
                      '{"sub":"00000000-0000-0000-0000-0000000a0010"}', true);
 
-  -- Count and ownership both, because a count of one row proves nothing on its
-  -- own about which row it is.
-  select count(*), count(*) filter (
-           where member_id = '00000000-0000-0000-0000-00000000a002')
+  -- Counted as "someone else's" and "mine", not as a total. A count proves
+  -- nothing on its own about WHICH rows came back, and an absolute total would
+  -- have to be rewritten every time the seed grows a month.
+  select count(*) filter (where member_id <> '00000000-0000-0000-0000-00000000a002'),
+         count(*) filter (where member_id =  '00000000-0000-0000-0000-00000000a002')
     into v_entries, v_own
   from public.ledger_entry;
-  select count(*) into v_posted   from public.ledger_entry_posted;
-  select count(*) into v_journal  from public.gl_journal;
-  select count(*) into v_invoices from public.invoice;
+  select count(*) into v_posted
+    from public.ledger_entry_posted
+   where member_id <> '00000000-0000-0000-0000-00000000a002';
+  select count(*) into v_journal
+    from public.gl_journal
+   where member_id <> '00000000-0000-0000-0000-00000000a002';
+  select count(*) into v_invoices
+    from public.invoice
+   where member_id <> '00000000-0000-0000-0000-00000000a002';
   v_balance := public.member_balance('00000000-0000-0000-0000-00000000a001');
 
   -- A pilot must not be able to write money rows at all.
@@ -708,19 +721,22 @@ begin
 
   perform set_config('role', 'postgres', true);
 
-  if v_entries <> 1 or v_own <> 1 then
-    raise exception 'FAIL  a pilot read % ledger entries, % of them their own',
-      v_entries, v_own;
+  if v_entries <> 0 then
+    raise exception 'FAIL  a pilot read % of another owner''s ledger entries', v_entries;
   end if;
-  if v_posted <> 1 then
-    raise exception 'FAIL  a pilot read % rows through ledger_entry_posted', v_posted;
+  -- And the other half of the claim: their own rows did come back, so the zero
+  -- above is RLS filtering rather than an empty table.
+  if v_own = 0 then
+    raise exception 'FAIL  a pilot could not read their own ledger at all';
   end if;
-  -- Two journal lines per entry, so one entry is two rows.
-  if v_journal <> 2 then
-    raise exception 'FAIL  a pilot read % rows through gl_journal', v_journal;
+  if v_posted <> 0 then
+    raise exception 'FAIL  a pilot read % foreign rows through ledger_entry_posted', v_posted;
   end if;
-  if v_invoices <> 1 then
-    raise exception 'FAIL  a pilot read % invoices', v_invoices;
+  if v_journal <> 0 then
+    raise exception 'FAIL  a pilot read % foreign rows through gl_journal', v_journal;
+  end if;
+  if v_invoices <> 0 then
+    raise exception 'FAIL  a pilot read % of another owner''s invoices', v_invoices;
   end if;
   if v_balance <> 0 then
     raise exception 'FAIL  a pilot read another owner''s balance as %', v_balance;
@@ -743,7 +759,9 @@ insert into public.invoice (id, company_id, member_id, period_month, status, num
 values ('00000000-0000-0000-0000-00000000f005',
         '00000000-0000-0000-0000-00000000c000',
         '00000000-0000-0000-0000-00000000a001',
-        date '2026-09-01', 'issued', 9201, now());
+        -- A month the seed does not use: an invoice is unique per member and
+        -- month, so borrowing September would collide with the seeded close.
+        date '2026-04-01', 'issued', 9201, now());
 
 do $$
 declare
@@ -756,7 +774,7 @@ begin
     values ('00000000-0000-0000-0000-00000000c000',
             '00000000-0000-0000-0000-00000000a002',
             '00000000-0000-0000-0000-00000000f005',
-            'flight_charge', date '2026-09-10', 'Wrong owner', 285.00, '4100');
+            'flight_charge', date '2026-04-10', 'Wrong owner', 285.00, '4100');
     v_blocked := null;
   exception when others then v_blocked := sqlerrm;
   end;
@@ -780,16 +798,19 @@ insert into public.invoice (id, company_id, member_id, period_month, status, num
 values ('00000000-0000-0000-0000-00000000f006',
         '00000000-0000-0000-0000-00000000c000',
         '00000000-0000-0000-0000-00000000a001',
-        date '2026-10-01', 'issued', 9301, now());
+        -- May, because the assertions below count rows in a date window and the
+        -- seed posts a payment in October. A window that catches seed rows
+        -- would be measuring the seed, not the journal.
+        date '2026-05-01', 'issued', 9301, now());
 
 insert into public.ledger_entry
   (company_id, member_id, invoice_id, kind, entry_date, description,
    amount, gl_account_code) values
   ('00000000-0000-0000-0000-00000000c000', '00000000-0000-0000-0000-00000000a001',
-   '00000000-0000-0000-0000-00000000f006', 'flight_charge', date '2026-10-05',
+   '00000000-0000-0000-0000-00000000f006', 'flight_charge', date '2026-05-05',
    '2.0 hr x $285.00', 570.00, '4100'),
   ('00000000-0000-0000-0000-00000000c000', '00000000-0000-0000-0000-00000000a001',
-   null, 'payment', date '2026-10-20', 'e-Transfer received', -570.00, '1000');
+   null, 'payment', date '2026-05-20', 'e-Transfer received', -570.00, '1000');
 
 do $$
 declare
@@ -800,10 +821,10 @@ declare
 begin
   select coalesce(sum(debit_credit), 0), count(*) into v_net, v_rows
   from public.gl_journal
-  where entry_date between date '2026-10-01' and date '2026-10-31';
+  where entry_date between date '2026-05-01' and date '2026-05-31';
 
   if v_net <> 0 then
-    raise exception 'FAIL  the journal nets to % over October', v_net;
+    raise exception 'FAIL  the journal nets to % over the month', v_net;
   end if;
   if v_rows <> 4 then
     raise exception 'FAIL  two entries produced % journal lines', v_rows;
@@ -812,10 +833,12 @@ begin
   -- The charge debits receivables; the payment credits them and debits the bank.
   select coalesce(sum(debit_credit), 0) into v_ar
   from public.gl_journal
-  where gl_account_code = '1100' and entry_date >= date '2026-10-01';
+  where gl_account_code = '1100' and entry_date >= date '2026-05-01'
+                                 and entry_date <= date '2026-05-31';
   select coalesce(sum(debit_credit), 0) into v_bank
   from public.gl_journal
-  where gl_account_code = '1000' and entry_date >= date '2026-10-01';
+  where gl_account_code = '1000' and entry_date >= date '2026-05-01'
+                                 and entry_date <= date '2026-05-31';
 
   if v_ar <> 0 then
     raise exception 'FAIL  receivables net to % after a charge and its payment', v_ar;
@@ -1059,10 +1082,15 @@ values ('00000000-0000-0000-0000-00000000a001', repeat('c', 64), 'shortcut');
 
 do $$
 declare
-  v_a     public.flight;
-  v_b     public.flight;
-  v_count int;
+  v_a      public.flight;
+  v_b      public.flight;
+  v_count  int;
+  -- Counted as "how many did these four calls add", not "how many exist": the
+  -- seed flies the aeroplane, and an absolute figure would be counting it.
+  v_before int;
 begin
+  select count(*) into v_before from public.flight;
+
   v_a := public.timer_start(repeat('c', 64), 48.65, -123.4, 12, 'key-start-1');
   -- Wind the clock back, because now() does not move within a transaction.
   update public.flight set start_at = start_at - interval '30 minutes'
@@ -1080,8 +1108,8 @@ begin
   end if;
 
   select count(*) into v_count from public.flight;
-  if v_count <> 1 then
-    raise exception 'FAIL  four calls left % flights', v_count;
+  if v_count <> v_before + 1 then
+    raise exception 'FAIL  four calls left % new flights', v_count - v_before;
   end if;
 
   -- Both fixes were recorded, and the replay did not duplicate them.
@@ -1375,21 +1403,31 @@ do $$
 declare
   v_est numeric;
 begin
+  -- The test lays its own datum rather than borrowing the seed's opening
+  -- reading. The claim being tested is that the estimate runs forward from the
+  -- NEWEST reading, so a test that started from the oldest one would have to
+  -- know everything the seed has flown since -- and would break every time the
+  -- seed grew a flight, which is exactly what happened when it did.
+  insert into public.tach_reading (aircraft_id, reading, read_at, read_by)
+  values ('00000000-0000-0000-0000-0000000ac001', 500.00,
+          timestamptz '2026-10-20 09:00:00-07',
+          '00000000-0000-0000-0000-00000000a001');
+
   v_est := public.aircraft_tach_estimate('00000000-0000-0000-0000-0000000ac001');
   if v_est is distinct from 500.00 then
-    raise exception 'FAIL  with no flights the estimate is % not the reading', v_est;
+    raise exception 'FAIL  with nothing flown since, the estimate is % not the reading', v_est;
   end if;
 
   -- Two one-hour flights after the reading: 1/1.3 = 0.769 -> 0.8 tach each.
   insert into public.flight (aircraft_id, pilot_member_id, start_at, end_at)
   values ('00000000-0000-0000-0000-0000000ac001',
           '00000000-0000-0000-0000-00000000a001',
-          timestamptz '2026-10-05 10:00:00-07',
-          timestamptz '2026-10-05 11:00:00-07'),
+          timestamptz '2026-10-21 10:00:00-07',
+          timestamptz '2026-10-21 11:00:00-07'),
          ('00000000-0000-0000-0000-0000000ac001',
           '00000000-0000-0000-0000-00000000a001',
-          timestamptz '2026-10-06 10:00:00-07',
-          timestamptz '2026-10-06 11:00:00-07');
+          timestamptz '2026-10-22 10:00:00-07',
+          timestamptz '2026-10-22 11:00:00-07');
 
   v_est := public.aircraft_tach_estimate('00000000-0000-0000-0000-0000000ac001');
   if v_est is distinct from 501.60 then
@@ -1400,7 +1438,7 @@ begin
   -- is simply newer, so the two flights above are now behind it.
   insert into public.tach_reading (aircraft_id, reading, read_at, read_by)
   values ('00000000-0000-0000-0000-0000000ac001', 505.00,
-          timestamptz '2026-10-07 09:00:00-07',
+          timestamptz '2026-10-23 09:00:00-07',
           '00000000-0000-0000-0000-00000000a001');
 
   v_est := public.aircraft_tach_estimate('00000000-0000-0000-0000-0000000ac001');
@@ -1412,8 +1450,8 @@ begin
   insert into public.flight (aircraft_id, pilot_member_id, start_at, end_at)
   values ('00000000-0000-0000-0000-0000000ac001',
           '00000000-0000-0000-0000-00000000a001',
-          timestamptz '2026-10-08 10:00:00-07',
-          timestamptz '2026-10-08 11:00:00-07');
+          timestamptz '2026-10-24 10:00:00-07',
+          timestamptz '2026-10-24 11:00:00-07');
 
   v_est := public.aircraft_tach_estimate('00000000-0000-0000-0000-0000000ac001');
   if v_est is distinct from 505.80 then
@@ -1438,7 +1476,13 @@ declare
   v_read   public.tach_reading;
   v_rows   int;
   v_est    numeric;
+  v_base   numeric;
 begin
+  -- Where the estimate stood before this test flew anything, because the only
+  -- claim below is about the 0.8 hr THIS flight adds. Stated as an absolute it
+  -- would be a claim about everything the seed has ever flown.
+  v_base := public.aircraft_tach_estimate('00000000-0000-0000-0000-0000000ac001');
+
   insert into public.flight
     (aircraft_id, pilot_member_id, start_at, end_at, actual_tach_hours)
   values ('00000000-0000-0000-0000-0000000ac001',
@@ -1485,8 +1529,9 @@ begin
   end if;
 
   v_est := public.aircraft_tach_estimate('00000000-0000-0000-0000-0000000ac001');
-  if v_est is distinct from 500.80 then
-    raise exception 'FAIL  after clearing, the estimate is % not seed + 0.8', v_est;
+  if v_est is distinct from v_base + 0.80 then
+    raise exception 'FAIL  after clearing, the estimate moved by % not 0.8',
+      v_est - v_base;
   end if;
 
   raise notice 'PASS  a confirmed tach is mirrored as a reading at the flight end';
@@ -1503,17 +1548,28 @@ rollback;
 begin;
 do $$
 declare
-  v_left  numeric;
-  v_used  numeric;
-  v_state text;
-  v_rows  int;
+  v_left     numeric;
+  v_used     numeric;
+  v_state    text;
+  v_rows     int;
+  v_est      numeric;
+  v_interval numeric;
 begin
-  select hours_remaining, hours_used, state into v_left, v_used, v_state
+  -- The counter has run on since the grease was last done, which is the
+  -- precondition for the reset below being visible at all. Asserted as "more
+  -- than nothing" rather than as a figure: how much has been flown since is
+  -- the seed's business, and a number here would be a claim about the seed.
+  select hours_used into v_used
     from public.maintenance_status
    where id = '00000000-0000-0000-0000-0000000f0001';
-  if (v_left, v_used, v_state) is distinct from (6.00, 19.00, 'ok') then
-    raise exception 'FAIL  the seeded grease reads %/%/%', v_left, v_used, v_state;
+  if v_used is null or v_used <= 0 then
+    raise exception 'FAIL  nothing has been flown since the grease: used is %', v_used;
   end if;
+
+  select interval_hours into v_interval
+    from public.maintenance_item
+   where id = '00000000-0000-0000-0000-0000000f0001';
+  v_est := public.aircraft_tach_estimate('00000000-0000-0000-0000-0000000ac001');
 
   alter table public.member disable trigger member_guard_privileged_columns;
   update public.member set auth_user_id = null;
@@ -1538,18 +1594,19 @@ begin
     raise exception 'FAIL  a pilot moved % maintenance interval(s)', v_rows;
   end if;
 
-  -- But can say they greased it.
+  -- But can say they greased it, at the tach as it stands now.
   insert into public.maintenance_event (item_id, done_on, tach, done_by)
-  values ('00000000-0000-0000-0000-0000000f0001', date '2026-10-11', 500.00,
+  values ('00000000-0000-0000-0000-0000000f0001', public.aircraft_today(), v_est,
           '00000000-0000-0000-0000-00000000a002');
 
   perform set_config('role', 'postgres', true);
 
-  select hours_remaining, hours_used into v_left, v_used
+  select hours_remaining, hours_used, state into v_left, v_used, v_state
     from public.maintenance_status
    where id = '00000000-0000-0000-0000-0000000f0001';
-  if (v_left, v_used) is distinct from (25.00, 0.00) then
-    raise exception 'FAIL  marking it done left % hr left, % used', v_left, v_used;
+  if (v_left, v_used, v_state) is distinct from (v_interval, 0.00, 'ok') then
+    raise exception 'FAIL  marking it done left % hr left, % used, state %',
+      v_left, v_used, v_state;
   end if;
 
   raise notice 'PASS  any pilot can mark a task done, and only that resets it';
@@ -1718,8 +1775,14 @@ begin;
 do $$
 declare
   v_snag public.snag;
+  v_base numeric;
 begin
-  -- Armed against the seeded 500.00 reading, while claiming a datum of its own.
+  -- The tach as it stands, because that is what the datum must be armed
+  -- against. A literal here would be a claim about how much the seed has
+  -- flown, not about the trigger under test.
+  v_base := public.aircraft_tach_estimate('00000000-0000-0000-0000-0000000ac001');
+
+  -- Armed against the estimate, while claiming a datum of its own.
   insert into public.snag
     (aircraft_id, title, status, reported_by,
      recheck_tach_hours, recheck_tach_base)
@@ -1727,7 +1790,7 @@ begin
           '00000000-0000-0000-0000-00000000a001', 10.0, 0.00)
   returning * into v_snag;
 
-  if v_snag.recheck_tach_base is distinct from 500.00 then
+  if v_snag.recheck_tach_base is distinct from v_base then
     raise exception 'FAIL  the re-check was armed at % rather than the tach estimate',
       v_snag.recheck_tach_base;
   end if;
@@ -1741,7 +1804,7 @@ begin
 
   update public.snag set notes = 'Still watching it'
    where id = v_snag.id returning * into v_snag;
-  if v_snag.recheck_tach_base is distinct from 500.00 then
+  if v_snag.recheck_tach_base is distinct from v_base then
     raise exception 'FAIL  re-saving the snag moved the datum to %',
       v_snag.recheck_tach_base;
   end if;
@@ -1749,7 +1812,7 @@ begin
   -- Moving the interval DOES re-arm it: twenty hours means twenty from now.
   update public.snag set recheck_tach_hours = 20.0
    where id = v_snag.id returning * into v_snag;
-  if v_snag.recheck_tach_base is distinct from 500.80 then
+  if v_snag.recheck_tach_base is distinct from v_base + 0.80 then
     raise exception 'FAIL  a new interval was measured from % not the current tach',
       v_snag.recheck_tach_base;
   end if;
@@ -1844,6 +1907,776 @@ begin
   end if;
 
   raise notice 'PASS  a snag comes back exactly one way, and outlives the job';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 31. month_charges() is the only arithmetic for what a month costs: the Bills
+--     screen's live draft and close_month() both ask it, so the review step
+--     cannot disagree with the invoice it is reviewing. Two things have to hold
+--     of it. It is security definer, so it must refuse to price somebody else's
+--     month unless an admin is asking -- SPEC.md 4.6, "only an admin sees all
+--     pilots' numbers". And it must repeat the month's hours on every component
+--     line, because that is what lets the Bills screen show the one wet rate
+--     SPEC.md 4.8 promises without a second query inventing its own hours.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_aircraft uuid := '00000000-0000-0000-0000-0000000ac001';
+  v_one      uuid := '00000000-0000-0000-0000-00000000a001';
+  v_two      uuid := '00000000-0000-0000-0000-00000000a002';
+  -- April, a month the seed does not touch. Every figure below is then this
+  -- test's own doing rather than a restatement of the seed, which is what went
+  -- wrong with the absolutes elsewhere in this file.
+  v_month    date := date '2026-04-01';
+  v_rows     int;
+  v_distinct int;
+  v_hours    numeric;
+  v_total    numeric;
+  v_qty      numeric;
+  v_desc     text;
+  v_blocked  text;
+begin
+  insert into public.flight
+    (aircraft_id, pilot_member_id, status, start_at, end_at)
+  values (v_aircraft, v_one, 'confirmed',
+          timestamptz '2026-04-10 10:00 America/Vancouver',
+          timestamptz '2026-04-10 11:24 America/Vancouver');
+
+  -- Both owners claim their row through the real path. The arithmetic below is
+  -- read as the admin, because month_charges has no answer at all for a caller
+  -- with no session -- which is the first thing this test establishes.
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set auth_user_id = null;
+  alter table public.member enable trigger member_guard_privileged_columns;
+
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0311",
+      "email":"owner1@example.test"}', true);
+  perform public.claim_member_identity();
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0312",
+      "email":"owner2@example.test"}', true);
+  perform public.claim_member_identity();
+
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0311"}', true);
+
+  -- 1.4 hr across the opening rate's six components.
+  select count(*), count(distinct period_hours), max(period_hours), sum(amount)
+    into v_rows, v_distinct, v_hours, v_total
+  from public.month_charges(v_aircraft, v_one, v_month)
+  where kind = 'flight_charge';
+
+  if v_rows <> 6 then
+    raise exception 'FAIL  the flight priced as % component lines, not 6', v_rows;
+  end if;
+  if (v_distinct, v_hours) is distinct from (1, 1.4) then
+    raise exception 'FAIL  the component lines carry % different hours, highest %',
+      v_distinct, v_hours;
+  end if;
+  if v_total is distinct from 399.00 then
+    raise exception 'FAIL  1.4 hr at the opening rate came to %, not 1.4 x 285', v_total;
+  end if;
+
+  -- Plus half of each monthly fixed cost, because this company splits them by
+  -- ownership percent and the two owners are 50/50.
+  select sum(amount), max(quantity), min(description)
+    into v_total, v_qty, v_desc
+  from public.month_charges(v_aircraft, v_one, v_month)
+  where kind <> 'flight_charge';
+
+  if (v_total, v_qty) is distinct from (525.00, 0.5) then
+    raise exception 'FAIL  the fixed costs came to % at a share of %', v_total, v_qty;
+  end if;
+  -- The share is named in the description, which is why the Bills screen shows
+  -- those lines without a caption of their own.
+  if v_desc not like '%50% share%' then
+    raise exception 'FAIL  a fixed cost line reads "%"', v_desc;
+  end if;
+
+  -- Nothing is charged while the company is not GST registered, which it is
+  -- not until SPEC.md section 8 question 5 is answered.
+  select sum(gst_amount) into v_total
+  from public.month_charges(v_aircraft, v_one, v_month);
+  if v_total is distinct from 0 then
+    raise exception 'FAIL  GST of % was charged by an unregistered company', v_total;
+  end if;
+
+  -- Now the authorisation. A pilot may price their own month and nobody
+  -- else's; the refusal is the only thing standing between security definer
+  -- and every pilot reading every other pilot's figures.
+  perform set_config('role', 'postgres', true);
+  update public.member set role = 'pilot' where id = v_two;
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0312"}', true);
+
+  begin
+    perform * from public.month_charges(v_aircraft, v_one, v_month);
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  a pilot priced another owner''s month';
+  end if;
+
+  -- And the other half of the claim, so the refusal above is about whose month
+  -- it is rather than a blanket block.
+  select count(*) into v_rows
+  from public.month_charges(v_aircraft, v_two, v_month);
+  if v_rows <> 2 then
+    raise exception 'FAIL  a pilot got % lines for their own month', v_rows;
+  end if;
+
+  raise notice 'PASS  a month is priced once, and only an admin prices anyone else''s';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 32. The owners' rule, 13 Oct 2026: a payment is recorded by an admin OTHER
+--     than the member it credits, whenever there is another admin to ask. Both
+--     owners are admins, so "admin only" on its own would let either of them
+--     clear their own balance unseen. Two layers have to hold: recorded_by is
+--     stamped from the session so it cannot be claimed, and the guard reads
+--     that stamp rather than anything in the request.
+--
+--     The rule stands down when there is only one admin -- the first weeks, or
+--     after a departure. A rule that locked the only admin out of recording a
+--     payment would just mean the ledger stopped being true.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_company uuid := '00000000-0000-0000-0000-00000000c000';
+  v_one     uuid := '00000000-0000-0000-0000-00000000a001';
+  v_two     uuid := '00000000-0000-0000-0000-00000000a002';
+  v_entry   uuid;
+  v_who     uuid;
+  v_amount  numeric;
+  v_blocked text;
+begin
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set auth_user_id = null;
+  alter table public.member enable trigger member_guard_privileged_columns;
+
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0032",
+      "email":"owner1@example.test"}', true);
+  perform public.claim_member_identity();
+
+  -- Recording somebody else's payment is the honest case, and the stamp
+  -- overrides what the request asked for: a caller cannot put the other
+  -- admin's name on a row they entered themselves.
+  insert into public.ledger_entry
+    (company_id, member_id, kind, entry_date, description, amount,
+     tax_treatment, gl_account_code, recorded_by)
+  values (v_company, v_two, 'payment', date '2026-04-05', 'e-Transfer',
+          -100.00, 'out_of_scope', '1000', v_two)
+  returning recorded_by into v_who;
+  if v_who is distinct from v_one then
+    raise exception 'FAIL  the row was recorded by % rather than the session', v_who;
+  end if;
+
+  -- So the guard cannot be walked around by claiming the other admin did it.
+  begin
+    insert into public.ledger_entry
+      (company_id, member_id, kind, entry_date, description, amount,
+       tax_treatment, gl_account_code, recorded_by)
+    values (v_company, v_one, 'payment', date '2026-04-05', 'e-Transfer',
+            -100.00, 'out_of_scope', '1000', v_two);
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  an admin cleared their own balance under another name';
+  end if;
+
+  -- Money going the other way is the same conflict of interest.
+  begin
+    insert into public.ledger_entry
+      (company_id, member_id, kind, entry_date, description, amount,
+       tax_treatment, gl_account_code)
+    values (v_company, v_one, 'payout', date '2026-04-05', 'Distribution',
+            100.00, 'out_of_scope', '1000');
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  an admin paid themselves out unwitnessed';
+  end if;
+
+  -- Through the function the app actually calls, too.
+  begin
+    perform public.record_payment(v_one, 500.00, date '2026-04-05');
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  record_payment credited the caller''s own balance';
+  end if;
+
+  -- The amount is typed in as the positive figure on the bank statement and
+  -- stored negative, because in this ledger positive means the member owes
+  -- more. The caller should not have to think about the sign convention.
+  v_entry := public.record_payment(v_two, 500.00, date '2026-04-06', '  ref 4821 ');
+  select amount, recorded_by, description into v_amount, v_who, v_blocked
+  from public.ledger_entry where id = v_entry;
+  if (v_amount, v_who, v_blocked) is distinct from (-500.00, v_one, 'ref 4821') then
+    raise exception 'FAIL  the payment stored %/%/%', v_amount, v_who, v_blocked;
+  end if;
+
+  -- And with nobody else to ask, the rule stands down.
+  perform set_config('role', 'postgres', true);
+  update public.member set role = 'pilot' where id = v_two;
+  perform set_config('role', 'authenticated', true);
+
+  v_entry := public.record_payment(v_one, 500.00, date '2026-04-07');
+  if v_entry is null then
+    raise exception 'FAIL  the only admin could not record their own payment';
+  end if;
+
+  raise notice 'PASS  a payment is witnessed by another admin whenever there is one';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 33. SPEC.md 4.6: "Closing a month locks that month's flights and generates
+--     the invoice", and "a sent invoice never changes silently". Closing is
+--     therefore deliberately re-runnable while the invoice is a draft -- an
+--     admin who spots a wrong flight time fixes it and closes again -- and
+--     deliberately inert once it is issued. The dangerous failure is the one
+--     in between: a second close that ADDS a second set of lines rather than
+--     replacing the first, which reads as a month billed twice.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_aircraft uuid := '00000000-0000-0000-0000-0000000ac001';
+  v_one      uuid := '00000000-0000-0000-0000-00000000a001';
+  v_month    date := date '2026-04-01';
+  v_invoice  uuid;
+  v_status   public.invoice_status;
+  v_number   bigint;
+  v_built    int;
+  v_rows     int;
+  v_total    numeric;
+  v_blocked  text;
+begin
+  insert into public.flight
+    (aircraft_id, pilot_member_id, status, start_at, end_at)
+  values (v_aircraft, v_one, 'confirmed',
+          timestamptz '2026-04-10 10:00 America/Vancouver',
+          timestamptz '2026-04-10 11:24 America/Vancouver');
+
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set auth_user_id = null;
+  alter table public.member enable trigger member_guard_privileged_columns;
+
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0033",
+      "email":"owner1@example.test"}', true);
+  perform public.claim_member_identity();
+
+  -- Both owners: one flew, and both owe their share of the hangar.
+  v_built := public.close_month(v_aircraft, v_month);
+  if v_built <> 2 then
+    raise exception 'FAIL  closing April built % drafts, not one per owner', v_built;
+  end if;
+
+  select id into v_invoice from public.invoice
+   where member_id = v_one and period_month = v_month;
+  select count(*), public.invoice_total(v_invoice) into v_rows, v_total
+  from public.ledger_entry where invoice_id = v_invoice;
+  if (v_rows, v_total) is distinct from (8, 924.00) then
+    raise exception 'FAIL  the draft has % lines coming to %', v_rows, v_total;
+  end if;
+
+  -- The charge belongs to the month it was incurred in, whenever the admin got
+  -- round to closing it.
+  select count(*) into v_rows from public.ledger_entry
+   where invoice_id = v_invoice and entry_date <> date '2026-04-30';
+  if v_rows <> 0 then
+    raise exception 'FAIL  % line(s) are not dated the end of the month they cover', v_rows;
+  end if;
+
+  -- Correct the flight and close again: the same invoice, re-priced, not a
+  -- second one and not sixteen lines.
+  perform set_config('role', 'postgres', true);
+  update public.flight set end_at = timestamptz '2026-04-10 11:54 America/Vancouver'
+   where pilot_member_id = v_one and public.aircraft_date(start_at) = date '2026-04-10';
+  perform set_config('role', 'authenticated', true);
+
+  v_built := public.close_month(v_aircraft, v_month);
+  select count(*) into v_rows from public.invoice
+   where member_id = v_one and period_month = v_month;
+  if (v_built, v_rows) is distinct from (2, 1) then
+    raise exception 'FAIL  closing twice built % drafts over % invoice(s)', v_built, v_rows;
+  end if;
+  select count(*), public.invoice_total(v_invoice) into v_rows, v_total
+  from public.ledger_entry where invoice_id = v_invoice;
+  if (v_rows, v_total) is distinct from (8, 1066.50) then
+    raise exception 'FAIL  the rebuilt draft has % lines coming to %', v_rows, v_total;
+  end if;
+
+  -- Issued, it is the record of what was sent. Closing again must step over it
+  -- entirely -- and the figure proves it did, because the flights are locked
+  -- now, so a rebuild would come back as the fixed costs alone.
+  v_number := public.issue_invoice(v_invoice);
+  v_built  := public.close_month(v_aircraft, v_month);
+  if v_built <> 1 then
+    raise exception 'FAIL  closing again rebuilt % drafts, not just the open one', v_built;
+  end if;
+
+  select status, number into v_status, v_number from public.invoice where id = v_invoice;
+  if (v_status, public.invoice_total(v_invoice)) is distinct from ('issued', 1066.50) then
+    raise exception 'FAIL  the issued invoice is now % at %',
+      v_status, public.invoice_total(v_invoice);
+  end if;
+  if v_number is null then
+    raise exception 'FAIL  the issued invoice lost its number';
+  end if;
+
+  -- A month nobody owned the aeroplane in produces no invoices at all, rather
+  -- than $0.00 ones to ignore.
+  v_built := public.close_month(v_aircraft, date '2025-12-01');
+  select count(*) into v_rows from public.invoice where period_month = date '2025-12-01';
+  if (v_built, v_rows) is distinct from (0, 0) then
+    raise exception 'FAIL  an empty month built % drafts and left % invoice(s)',
+      v_built, v_rows;
+  end if;
+
+  -- The future is not closeable: there is still flying to come.
+  begin
+    perform public.close_month(
+      v_aircraft,
+      (date_trunc('month', public.aircraft_today()) + interval '2 months')::date);
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  a month that has not started yet was closed';
+  end if;
+
+  -- And a pilot cannot close one. The Server Action checks this too, but a
+  -- Server Action is a public POST endpoint, so it is the belt and this is the
+  -- braces. Note when mutation-testing this one that it holds in two layers:
+  -- removing close_month's own role check is not enough, because month_charges
+  -- then refuses to price the other owner's month anyway.
+  perform set_config('role', 'postgres', true);
+  update public.member set role = 'pilot' where id = v_one;
+  perform set_config('role', 'authenticated', true);
+  begin
+    perform public.close_month(v_aircraft, v_month);
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  a pilot closed the month';
+  end if;
+
+  raise notice 'PASS  a draft rebuilds on every close, and an issued invoice never does';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 34. Issuing is the irreversible half. The number is allocated here rather
+--     than at draft time because a discarded draft would leave a gap, and a
+--     GST invoice run must not have one. And the lock has to cover exactly the
+--     flights that were priced: anything narrower bills a flight twice next
+--     month, anything wider swallows one that was never charged for. Both
+--     sides ask month_flight_ids() which flights those are, so this test holds
+--     the answer still and checks the lock against it.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_aircraft uuid := '00000000-0000-0000-0000-0000000ac001';
+  v_company  uuid := '00000000-0000-0000-0000-00000000c000';
+  v_one      uuid := '00000000-0000-0000-0000-00000000a001';
+  v_two      uuid := '00000000-0000-0000-0000-00000000a002';
+  v_month    date := date '2026-04-01';
+  v_mine     uuid;
+  v_theirs   uuid;
+  v_empty    uuid;
+  v_ids      uuid[];
+  v_before   bigint;
+  v_after    bigint;
+  v_first    bigint;
+  v_second   bigint;
+  v_rows     int;
+  v_blocked  text;
+begin
+  insert into public.flight
+    (aircraft_id, pilot_member_id, status, start_at, end_at)
+  values (v_aircraft, v_one, 'confirmed',
+          timestamptz '2026-04-10 10:00 America/Vancouver',
+          timestamptz '2026-04-10 11:24 America/Vancouver'),
+         (v_aircraft, v_two, 'confirmed',
+          timestamptz '2026-04-12 13:00 America/Vancouver',
+          timestamptz '2026-04-12 13:36 America/Vancouver');
+
+  -- A draft with nothing on it, to be refused below.
+  insert into public.invoice (company_id, member_id, period_month)
+  values (v_company, v_one, date '2026-03-01')
+  returning id into v_empty;
+
+  select next_number into v_before
+  from public.invoice_counter where company_id = v_company;
+
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set auth_user_id = null;
+  alter table public.member enable trigger member_guard_privileged_columns;
+
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0034",
+      "email":"owner1@example.test"}', true);
+  perform public.claim_member_identity();
+
+  perform public.close_month(v_aircraft, v_month);
+  select id into v_mine   from public.invoice
+   where member_id = v_one and period_month = v_month;
+  select id into v_theirs from public.invoice
+   where member_id = v_two and period_month = v_month;
+
+  -- Held still before issuing, because issuing is what takes these flights out
+  -- of month_flight_ids' answer.
+  select array_agg(t.flight_id) into v_ids
+  from public.month_flight_ids(v_aircraft, v_one, v_month) as t(flight_id);
+  if coalesce(array_length(v_ids, 1), 0) <> 1 then
+    raise exception 'FAIL  the month named % flights to lock, so the test proves nothing',
+      coalesce(array_length(v_ids, 1), 0);
+  end if;
+
+  -- An empty draft would take a number and say nothing.
+  begin
+    perform public.issue_invoice(v_empty);
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  an invoice with no lines was issued';
+  end if;
+
+  v_first  := public.issue_invoice(v_mine);
+  v_second := public.issue_invoice(v_theirs);
+
+  -- Read back as postgres: the counter has no select policy at all, because
+  -- nothing is meant to read it except next_invoice_number(), which is
+  -- security definer. Asking as the admin would silently return null.
+  perform set_config('role', 'postgres', true);
+  select next_number into v_after
+  from public.invoice_counter where company_id = v_company;
+  perform set_config('role', 'authenticated', true);
+
+  -- Gapless, and stated as "the next one, then the one after" rather than as
+  -- figures: which numbers they are is the seed's business.
+  if (v_first, v_second, v_after) is distinct from (v_before, v_before + 1, v_before + 2) then
+    raise exception 'FAIL  numbering went % then % with the counter at %, from %',
+      v_first, v_second, v_after, v_before;
+  end if;
+
+  -- Every flight that was priced is locked to the invoice that priced it.
+  select count(*) into v_rows from public.flight
+   where id = any(v_ids)
+     and (status <> 'billed' or invoice_id is distinct from v_mine);
+  if v_rows <> 0 then
+    raise exception 'FAIL  % of the month''s flights were left unlocked', v_rows;
+  end if;
+
+  -- And nothing else is, so the lock did not reach into another month or
+  -- another pilot's flying.
+  select count(*) into v_rows from public.flight
+   where invoice_id = v_mine and not (id = any(v_ids));
+  if v_rows <> 0 then
+    raise exception 'FAIL  % flight(s) outside the month were locked to the invoice', v_rows;
+  end if;
+
+  -- Issuing twice would allocate a second number to the same invoice. Two
+  -- layers again: removing issue_invoice's own status check is not enough,
+  -- because invoice_guard_immutable refuses the update either way.
+  begin
+    perform public.issue_invoice(v_mine);
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  an issued invoice was issued again';
+  end if;
+
+  perform set_config('role', 'postgres', true);
+  update public.member set role = 'pilot' where id = v_one;
+  perform set_config('role', 'authenticated', true);
+  begin
+    perform public.issue_invoice(v_empty);
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  a pilot issued an invoice';
+  end if;
+
+  raise notice 'PASS  issuing takes the next number and locks exactly the month priced';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 35. All three arms of fixed_cost_split are implemented even though this
+--     company uses ownership_pct, because a setting that silently bills the
+--     wrong split when flipped is worse than no setting at all. Nobody will
+--     exercise the other two by hand before the day they are switched on.
+--
+--     The share is read as of the FIRST of the month throughout: a hangarage
+--     rise or an ownership change on the 20th applies to the next bill, not
+--     retroactively to this one.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_aircraft uuid := '00000000-0000-0000-0000-0000000ac001';
+  v_one      uuid := '00000000-0000-0000-0000-00000000a001';
+  v_two      uuid := '00000000-0000-0000-0000-00000000a002';
+  v_month    date := date '2026-04-01';
+begin
+  -- ownership_pct: the two owners are 50/50 from 1 Jan.
+  if public.fixed_cost_share(v_aircraft, v_one, v_month) is distinct from 0.5 then
+    raise exception 'FAIL  a 50%% owner''s share of the hangar is %',
+      public.fixed_cost_share(v_aircraft, v_one, v_month);
+  end if;
+
+  -- Before anyone owned it, nobody pays for it. Returned as 0 rather than
+  -- null, so close_month writes no line instead of a null one.
+  if public.fixed_cost_share(v_aircraft, v_one, date '2025-12-01') is distinct from 0 then
+    raise exception 'FAIL  a month before the ownership began charges a share of %',
+      public.fixed_cost_share(v_aircraft, v_one, date '2025-12-01');
+  end if;
+
+  -- An ownership change part-way through the month belongs to the NEXT bill:
+  -- the share is read as of the first, whatever date it is asked about. Only
+  -- the mid-month question can catch this, because asking about the 1st gives
+  -- the same answer whether or not the date is truncated.
+  insert into public.ownership_period (id, aircraft_id, effective_from, note)
+  values ('00000000-0000-0000-0000-0000000b0351', v_aircraft, date '2026-04-20',
+          'A change part-way through April');
+  insert into public.ownership_share (period_id, member_id, pct) values
+    ('00000000-0000-0000-0000-0000000b0351', v_one, 100.0000),
+    ('00000000-0000-0000-0000-0000000b0351', v_two,   0.0000);
+
+  if public.fixed_cost_share(v_aircraft, v_one, date '2026-04-20') is distinct from 0.5 then
+    raise exception 'FAIL  asked about the 20th, April''s share is %',
+      public.fixed_cost_share(v_aircraft, v_one, date '2026-04-20');
+  end if;
+
+  -- equal: the same answer here, which is the point -- 50/50 ownership and two
+  -- owners sharing equally are the same split, so this arm is pinned by the
+  -- case below it rather than by this one.
+  update public.aircraft set fixed_cost_split = 'equal' where id = v_aircraft;
+  if public.fixed_cost_share(v_aircraft, v_one, v_month) is distinct from 0.5 then
+    raise exception 'FAIL  one of two equal owners pays %',
+      public.fixed_cost_share(v_aircraft, v_one, v_month);
+  end if;
+
+  -- An owner who has exited sits at 0% and does not pay hangarage, so "equal"
+  -- means equal among the owners of record that month and not among everyone
+  -- still on the roster.
+  insert into public.ownership_period (id, aircraft_id, effective_from, note)
+  values ('00000000-0000-0000-0000-0000000b0035', v_aircraft, date '2026-03-01',
+          'One owner bought the other out');
+  insert into public.ownership_share (period_id, member_id, pct) values
+    ('00000000-0000-0000-0000-0000000b0035', v_one, 100.0000),
+    ('00000000-0000-0000-0000-0000000b0035', v_two,   0.0000);
+
+  if public.fixed_cost_share(v_aircraft, v_one, v_month) is distinct from 1.0 then
+    raise exception 'FAIL  the sole remaining owner pays %',
+      public.fixed_cost_share(v_aircraft, v_one, v_month);
+  end if;
+  if public.fixed_cost_share(v_aircraft, v_two, v_month) is distinct from 0 then
+    raise exception 'FAIL  an exited owner still pays %',
+      public.fixed_cost_share(v_aircraft, v_two, v_month);
+  end if;
+
+  -- hours_flown: whoever flew it pays for the hangar it sat in, in proportion.
+  -- 1.4 hr against 0.6 hr is 70/30, and ownership is irrelevant to this arm --
+  -- which the period inserted above proves, since it would say 100/0.
+  update public.aircraft set fixed_cost_split = 'hours_flown' where id = v_aircraft;
+  insert into public.flight
+    (aircraft_id, pilot_member_id, status, start_at, end_at)
+  values (v_aircraft, v_one, 'confirmed',
+          timestamptz '2026-04-10 10:00 America/Vancouver',
+          timestamptz '2026-04-10 11:24 America/Vancouver'),
+         (v_aircraft, v_two, 'confirmed',
+          timestamptz '2026-04-12 13:00 America/Vancouver',
+          timestamptz '2026-04-12 13:36 America/Vancouver');
+
+  if public.fixed_cost_share(v_aircraft, v_one, v_month) is distinct from 0.7 then
+    raise exception 'FAIL  1.4 of 2.0 hr flown is a share of %',
+      public.fixed_cost_share(v_aircraft, v_one, v_month);
+  end if;
+  if public.fixed_cost_share(v_aircraft, v_two, v_month) is distinct from 0.3 then
+    raise exception 'FAIL  0.6 of 2.0 hr flown is a share of %',
+      public.fixed_cost_share(v_aircraft, v_two, v_month);
+  end if;
+
+  -- A month nobody flew divides by zero unless it is guarded.
+  if public.fixed_cost_share(v_aircraft, v_one, date '2026-02-01') is distinct from 0 then
+    raise exception 'FAIL  a month with no flying gives a share of %',
+      public.fixed_cost_share(v_aircraft, v_one, date '2026-02-01');
+  end if;
+
+  raise notice 'PASS  every fixed-cost split is implemented, and reads as of the 1st';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 36. Settling is a convenience, not an accounting fact -- the balance is the
+--     sum of the ledger either way. So it is all-or-nothing against the whole
+--     balance rather than an allocation of one payment to particular invoices,
+--     which would need a matching table and would still be guesswork. What
+--     must not happen is a part payment marking the bill Paid.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_one     uuid := '00000000-0000-0000-0000-00000000a001';
+  v_owed    numeric;
+  v_part    numeric;
+  v_due     int;
+  v_rows    int;
+begin
+  -- Measured from the ledger rather than stated, because what the seed has
+  -- billed and paid is the seed's business.
+  v_owed := public.member_balance(v_one);
+  select count(*) into v_due from public.invoice
+   where member_id = v_one and status = 'issued';
+  if v_owed <= 0 or v_due = 0 then
+    raise exception 'FAIL  nothing is outstanding, so the test proves nothing: % over % invoice(s)',
+      v_owed, v_due;
+  end if;
+
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set auth_user_id = null;
+  alter table public.member enable trigger member_guard_privileged_columns;
+
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0036",
+      "email":"owner2@example.test"}', true);
+  perform public.claim_member_identity();
+
+  -- Half of it, recorded by the other admin as the rule requires.
+  v_part := round(v_owed / 2, 2);
+  perform public.record_payment(v_one, v_part, date '2026-10-20');
+
+  perform set_config('role', 'postgres', true);
+  select count(*) into v_rows from public.invoice
+   where member_id = v_one and status = 'issued';
+  if v_rows <> v_due then
+    raise exception 'FAIL  a part payment settled % of % due invoice(s)',
+      v_due - v_rows, v_due;
+  end if;
+  if public.member_balance(v_one) is distinct from v_owed - v_part then
+    raise exception 'FAIL  after paying % the balance is % not %',
+      v_part, public.member_balance(v_one), v_owed - v_part;
+  end if;
+
+  -- And now the rest.
+  perform set_config('role', 'authenticated', true);
+  perform public.record_payment(v_one, v_owed - v_part, date '2026-10-21');
+
+  perform set_config('role', 'postgres', true);
+  if public.member_balance(v_one) is distinct from 0 then
+    raise exception 'FAIL  paying the balance in full left %',
+      public.member_balance(v_one);
+  end if;
+  select count(*) into v_rows from public.invoice
+   where member_id = v_one and status = 'issued';
+  if v_rows <> 0 then
+    raise exception 'FAIL  % invoice(s) stayed due after the balance cleared', v_rows;
+  end if;
+  select count(*) into v_rows from public.invoice
+   where member_id = v_one and status = 'settled' and settled_at is null;
+  if v_rows <> 0 then
+    raise exception 'FAIL  % settled invoice(s) do not say when', v_rows;
+  end if;
+
+  raise notice 'PASS  only a payment that clears the balance settles the invoices';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 37. A bill is for a calendar month at the aircraft's base. Bucketing flights
+--     by the raw timestamp would be bucketing them by UTC, which after 5pm in
+--     Victoria is already tomorrow -- so the last evening of the month would
+--     land on the next month's bill, and the last afternoon of the month
+--     before would land on this one. Both directions are checked, because the
+--     bug is symmetrical and only one half of it is obvious.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_aircraft uuid := '00000000-0000-0000-0000-0000000ac001';
+  v_one      uuid := '00000000-0000-0000-0000-00000000a001';
+  v_evening  uuid;
+  v_eve_prev uuid;
+  v_rows     int;
+begin
+  -- 18:00 on 30 April in Victoria is 01:00 on 1 May in UTC.
+  insert into public.flight
+    (aircraft_id, pilot_member_id, status, start_at, end_at)
+  values (v_aircraft, v_one, 'confirmed',
+          timestamptz '2026-04-30 18:00 America/Vancouver',
+          timestamptz '2026-04-30 19:00 America/Vancouver')
+  returning id into v_evening;
+
+  -- And 17:00 on 31 March is midnight on 1 April, which the same mistake
+  -- pushes the other way.
+  insert into public.flight
+    (aircraft_id, pilot_member_id, status, start_at, end_at)
+  values (v_aircraft, v_one, 'confirmed',
+          timestamptz '2026-03-31 17:00 America/Vancouver',
+          timestamptz '2026-03-31 18:00 America/Vancouver')
+  returning id into v_eve_prev;
+
+  if public.aircraft_date(timestamptz '2026-04-30 18:00 America/Vancouver')
+     is distinct from date '2026-04-30' then
+    raise exception 'FAIL  an evening in Victoria is dated %',
+      public.aircraft_date(timestamptz '2026-04-30 18:00 America/Vancouver');
+  end if;
+
+  select count(*) into v_rows
+  from public.month_flight_ids(v_aircraft, v_one, date '2026-04-01') as t(flight_id)
+  where t.flight_id = v_evening;
+  if v_rows <> 1 then
+    raise exception 'FAIL  an evening flight on the 30th is not on April''s bill';
+  end if;
+
+  select count(*) into v_rows
+  from public.month_flight_ids(v_aircraft, v_one, date '2026-05-01') as t(flight_id)
+  where t.flight_id = v_evening;
+  if v_rows <> 0 then
+    raise exception 'FAIL  an evening flight on 30 April is billed in May as well';
+  end if;
+
+  select count(*) into v_rows
+  from public.month_flight_ids(v_aircraft, v_one, date '2026-04-01') as t(flight_id)
+  where t.flight_id = v_eve_prev;
+  if v_rows <> 0 then
+    raise exception 'FAIL  an evening flight on 31 March is billed in April';
+  end if;
+
+  select count(*) into v_rows
+  from public.month_flight_ids(v_aircraft, v_one, date '2026-03-01') as t(flight_id)
+  where t.flight_id = v_eve_prev;
+  if v_rows <> 1 then
+    raise exception 'FAIL  an evening flight on 31 March is not on March''s bill';
+  end if;
+
+  raise notice 'PASS  a month is billed as the aeroplane''s calendar month';
 end $$;
 rollback;
 

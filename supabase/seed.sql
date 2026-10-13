@@ -270,3 +270,123 @@ insert into public.snag (
    'Oil seep at valve cover', 'watch', false,
    '00000000-0000-0000-0000-00000000a001', now() - interval '21 days', null,
    '00000000-0000-0000-0000-0000000f0001');
+
+-- ---------------------------------------------------------------------------
+-- Flights, and the September close
+--
+-- TODO(seed) DELETE everything below. It is invented, and exists so the Bills
+-- tab has a closed month to show history for and an open one to draft.
+--
+-- Written as literal rows rather than by calling close_month(), because the
+-- seed runs with no session and close_month() refuses anyone who is not an
+-- admin -- which is the point of it. The figures are what close_month() would
+-- produce: 2.3 hr at the opening rate, split across its six components, plus
+-- half of each monthly fixed cost.
+-- ---------------------------------------------------------------------------
+
+insert into public.invoice
+  (id, company_id, member_id, period_month, number, status, issued_at, note)
+values
+  ('00000000-0000-0000-0000-00000001f001',
+   '00000000-0000-0000-0000-00000000c000',
+   '00000000-0000-0000-0000-00000000a001',
+   date '2026-09-01', 1, 'issued',
+   timestamptz '2026-10-01 09:00 America/Vancouver', 'Placeholder: September'),
+  ('00000000-0000-0000-0000-00000001f002',
+   '00000000-0000-0000-0000-00000000c000',
+   '00000000-0000-0000-0000-00000000a002',
+   date '2026-09-01', 2, 'issued',
+   timestamptz '2026-10-01 09:00 America/Vancouver', 'Placeholder: September');
+
+-- The counter has to be moved past the numbers used above, or the first real
+-- close would try to reissue number 1 and hit the unique index.
+insert into public.invoice_counter (company_id, next_number)
+values ('00000000-0000-0000-0000-00000000c000', 3);
+
+-- September's flights, locked to the invoice they were billed on. 1.4 hr and
+-- 0.9 hr; billed_hours and est_tach_hours are derived by the trigger.
+insert into public.flight
+  (aircraft_id, pilot_member_id, status, start_at, end_at, tach_factor_used,
+   invoice_id, journey_text)
+values
+  ('00000000-0000-0000-0000-0000000ac001',
+   '00000000-0000-0000-0000-00000000a001', 'billed',
+   timestamptz '2026-09-12 10:00 America/Vancouver',
+   timestamptz '2026-09-12 11:24 America/Vancouver', 1.300,
+   '00000000-0000-0000-0000-00000001f001', 'Placeholder: local'),
+  ('00000000-0000-0000-0000-0000000ac001',
+   '00000000-0000-0000-0000-00000000a001', 'billed',
+   timestamptz '2026-09-26 13:00 America/Vancouver',
+   timestamptz '2026-09-26 13:54 America/Vancouver', 1.300,
+   '00000000-0000-0000-0000-00000001f001', 'Placeholder: local');
+
+-- October's flight is still confirmed, not billed: the month is open, the
+-- flight is still editable, and it is what "October so far" is drafted from.
+insert into public.flight
+  (aircraft_id, pilot_member_id, status, start_at, end_at, tach_factor_used,
+   journey_text)
+values
+  ('00000000-0000-0000-0000-0000000ac001',
+   '00000000-0000-0000-0000-00000000a001', 'confirmed',
+   timestamptz '2026-10-05 09:00 America/Vancouver',
+   timestamptz '2026-10-05 11:06 America/Vancouver', 1.300,
+   'Placeholder: local');
+
+-- One line per rate component, because the general ledger wants fuel, reserve
+-- and operating revenue in different accounts. The pilot sees them summed.
+insert into public.ledger_entry
+  (company_id, member_id, invoice_id, kind, entry_date, description,
+   quantity, unit_rate, amount, tax_treatment, gl_account_code, recorded_by)
+values
+  ('00000000-0000-0000-0000-00000000c000', '00000000-0000-0000-0000-00000000a001',
+   '00000000-0000-0000-0000-00000001f001', 'flight_charge', date '2026-09-30',
+   'Flight time — Fuel',               2.30, 150.0000, 345.00, 'taxable', '4100',
+   '00000000-0000-0000-0000-00000000a001'),
+  ('00000000-0000-0000-0000-00000000c000', '00000000-0000-0000-0000-00000000a001',
+   '00000000-0000-0000-0000-00000001f001', 'flight_charge', date '2026-09-30',
+   'Flight time — Engine overhaul',     2.30,  40.0000,  92.00, 'taxable', '4300',
+   '00000000-0000-0000-0000-00000000a001'),
+  ('00000000-0000-0000-0000-00000000c000', '00000000-0000-0000-0000-00000000a001',
+   '00000000-0000-0000-0000-00000001f001', 'flight_charge', date '2026-09-30',
+   'Flight time — Propeller',           2.30,  10.0000,  23.00, 'taxable', '4300',
+   '00000000-0000-0000-0000-00000000a001'),
+  ('00000000-0000-0000-0000-00000000c000', '00000000-0000-0000-0000-00000000a001',
+   '00000000-0000-0000-0000-00000001f001', 'flight_charge', date '2026-09-30',
+   'Flight time — Floats and rigging',  2.30,  15.0000,  34.50, 'taxable', '4300',
+   '00000000-0000-0000-0000-00000000a001'),
+  ('00000000-0000-0000-0000-00000000c000', '00000000-0000-0000-0000-00000000a001',
+   '00000000-0000-0000-0000-00000001f001', 'flight_charge', date '2026-09-30',
+   'Flight time — Contingency',         2.30,  15.0000,  34.50, 'taxable', '4300',
+   '00000000-0000-0000-0000-00000000a001'),
+  ('00000000-0000-0000-0000-00000000c000', '00000000-0000-0000-0000-00000000a001',
+   '00000000-0000-0000-0000-00000001f001', 'flight_charge', date '2026-09-30',
+   'Flight time — Other operating',     2.30,  55.0000, 126.50, 'taxable', '4200',
+   '00000000-0000-0000-0000-00000000a001'),
+  ('00000000-0000-0000-0000-00000000c000', '00000000-0000-0000-0000-00000000a001',
+   '00000000-0000-0000-0000-00000001f001', 'hangarage', date '2026-09-30',
+   'Hangarage · 50% share',             0.50, 600.0000, 300.00, 'taxable', '4400',
+   '00000000-0000-0000-0000-00000000a001'),
+  ('00000000-0000-0000-0000-00000000c000', '00000000-0000-0000-0000-00000000a001',
+   '00000000-0000-0000-0000-00000001f001', 'insurance', date '2026-09-30',
+   'Insurance · 50% share',             0.50, 450.0000, 225.00, 'out_of_scope', '4500',
+   '00000000-0000-0000-0000-00000000a001'),
+
+  -- Owner Two did not fly in September, so their bill is the fixed costs only.
+  ('00000000-0000-0000-0000-00000000c000', '00000000-0000-0000-0000-00000000a002',
+   '00000000-0000-0000-0000-00000001f002', 'hangarage', date '2026-09-30',
+   'Hangarage · 50% share',             0.50, 600.0000, 300.00, 'taxable', '4400',
+   '00000000-0000-0000-0000-00000000a001'),
+  ('00000000-0000-0000-0000-00000000c000', '00000000-0000-0000-0000-00000000a002',
+   '00000000-0000-0000-0000-00000001f002', 'insurance', date '2026-09-30',
+   'Insurance · 50% share',             0.50, 450.0000, 225.00, 'out_of_scope', '4500',
+   '00000000-0000-0000-0000-00000000a001');
+
+-- Recorded by the OTHER owner, which is the rule: with more than one admin, the
+-- person whose balance it clears is not the person who confirms it arrived.
+insert into public.ledger_entry
+  (company_id, member_id, kind, entry_date, description, amount,
+   tax_treatment, gl_account_code, recorded_by)
+values
+  ('00000000-0000-0000-0000-00000000c000', '00000000-0000-0000-0000-00000000a001',
+   'payment', date '2026-10-03', 'e-Transfer received', -800.00,
+   'out_of_scope', '1000', '00000000-0000-0000-0000-00000000a002');

@@ -67,6 +67,16 @@ declare
   v_state       text;
   v_ok          boolean;
   v_base        numeric;
+  v_admin       uuid := '00000000-0000-0000-0000-0000000a00fa';
+  v_pilot       uuid := '00000000-0000-0000-0000-0000000a00f0';
+  v_air         uuid;
+  v_month       date;
+  v_billed      uuid;
+  v_invoice     uuid;
+  v_number      bigint;
+  v_wet         numeric;
+  v_total       numeric;
+  v_blocked     text;
 begin
   select count(*) into v_tables
   from pg_tables
@@ -451,6 +461,132 @@ begin
   end;
 
   raise notice 'PASS  the tach estimate, maintenance status and snag re-checks derive on vanilla Postgres';
+
+  -- Billing is the half of this app whose failure nobody notices for a year: a
+  -- restore that brought the tables across but not month_charges() looks
+  -- perfectly healthy right up to the first invoice that is wrong. So close a
+  -- month end to end here -- pricing, the gapless number, the flight lock, the
+  -- four-eyes rule on payments and the settle -- on an instance that has never
+  -- run Supabase.
+  select a.id into v_air from public.aircraft a limit 1;
+
+  -- Two months back: past, so it is closeable, and not the month the seed
+  -- already closed. Derived rather than written down, because a literal month
+  -- here would expire.
+  v_month := date_trunc('month', public.aircraft_today() - interval '2 months')::date;
+
+  -- The claims are still the pilot's from the sign-in check above, which is
+  -- the moment to prove month_charges refuses them somebody else's figures.
+  -- SPEC.md 4.6: "only an admin sees all pilots' numbers."
+  begin
+    perform * from public.month_charges(v_air, v_admin, v_month);
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  a restored pilot priced another member''s month';
+  end if;
+
+  insert into public.flight (aircraft_id, pilot_member_id, status, start_at, end_at)
+  values (v_air, v_pilot, 'confirmed',
+          (v_month + 10 + time '10:00') at time zone 'America/Vancouver',
+          (v_month + 10 + time '11:24') at time zone 'America/Vancouver')
+  returning id into v_billed;
+
+  -- Closing needs an admin, and whether either seeded owner's row had been
+  -- claimed by a browser before the export was taken is not this script's
+  -- business. So it brings its own, through the same sign-in path.
+  insert into public.member (id, full_name, email, role)
+  values (v_admin, 'Restore Admin', 'restore-admin@example.invalid', 'admin');
+
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a00fb",
+      "email":"restore-admin@example.invalid"}', true);
+  if public.claim_member_identity() is distinct from v_admin then
+    raise exception 'FAIL  the restored admin could not claim its roster row';
+  end if;
+
+  v_count := public.close_month(v_air, v_month);
+  if v_count = 0 then
+    raise exception 'FAIL  closing % built no drafts after restore', v_month;
+  end if;
+
+  select i.id into v_invoice from public.invoice i
+   where i.member_id = v_pilot and i.period_month = v_month;
+  if v_invoice is null then
+    raise exception 'FAIL  the member who flew got no draft after restore';
+  end if;
+
+  -- 1.4 hr at the wet rate, and nothing else: this member owns none of the
+  -- aeroplane, so they pay for flying and not for the hangar. Which also shows
+  -- fixed_cost_share came back able to say "none of it".
+  v_wet := public.wet_rate_as_of(v_air, v_month);
+  if public.invoice_total(v_invoice) is distinct from round(1.4 * v_wet, 2) then
+    raise exception 'FAIL  1.4 hr at % came to % after restore',
+      v_wet, public.invoice_total(v_invoice);
+  end if;
+  select count(*) into v_count from public.ledger_entry
+   where invoice_id = v_invoice and kind <> 'flight_charge';
+  if v_count <> 0 then
+    raise exception 'FAIL  a non-owner was billed % fixed-cost line(s) after restore', v_count;
+  end if;
+
+  v_number := public.issue_invoice(v_invoice);
+  if v_number is null then
+    raise exception 'FAIL  issuing allocated no number after restore';
+  end if;
+
+  -- The lock: the flight that was priced is now on the invoice that priced it,
+  -- so next month cannot bill it again.
+  select f.status::text, f.invoice_id into v_state, v_item
+  from public.flight f where f.id = v_billed;
+  if (v_state, v_item) is distinct from ('billed', v_invoice) then
+    raise exception 'FAIL  the billed flight restored as % against %', v_state, v_item;
+  end if;
+
+  -- SPEC.md 4.6: "a sent invoice never changes silently". Closing again must
+  -- step over it -- and the figure proves it did, because the flight is locked
+  -- now, so a rebuild would come back empty.
+  v_count := public.close_month(v_air, v_month);
+  if public.invoice_total(v_invoice) is distinct from round(1.4 * v_wet, 2) then
+    raise exception 'FAIL  closing again rebuilt an issued invoice after restore';
+  end if;
+
+  -- The owners' rule travels with the schema: an admin does not record the
+  -- payment that clears their own balance while there is another admin to ask.
+  begin
+    perform public.record_payment(v_admin, 100.00, public.aircraft_today());
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  a restored admin cleared their own balance unwitnessed';
+  end if;
+
+  v_total := public.member_balance(v_pilot);
+  if v_total <= 0 then
+    raise exception 'FAIL  nothing is outstanding to pay after restore: %', v_total;
+  end if;
+  perform public.record_payment(v_pilot, v_total, public.aircraft_today(), 'restore check');
+
+  if public.member_balance(v_pilot) is distinct from 0 then
+    raise exception 'FAIL  paying in full left % after restore',
+      public.member_balance(v_pilot);
+  end if;
+  select count(*) into v_count from public.invoice
+   where member_id = v_pilot and status = 'issued';
+  if v_count <> 0 then
+    raise exception 'FAIL  % invoice(s) stayed due after the balance cleared', v_count;
+  end if;
+
+  -- And every one of those postings is still double entry, which is the whole
+  -- reason the journal view exists.
+  select coalesce(sum(debit_credit), 0) into v_max from public.gl_journal;
+  if v_max <> 0 then
+    raise exception 'FAIL  the restored journal nets to % once a month is closed', v_max;
+  end if;
+
+  raise notice 'PASS  a month closes, invoices, locks its flights and settles on vanilla Postgres';
 end $$;
 SQL
 
