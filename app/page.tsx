@@ -2,10 +2,13 @@ import Link from "next/link";
 
 import { Chip } from "@/components/chip";
 import { TabBar } from "@/components/tab-bar";
+import { TaskRow } from "@/components/task-row";
 import { TimerButton } from "@/components/timer-button";
+import { getLiveSnags } from "@/lib/aircraft";
 import { requireMember } from "@/lib/dal";
 import { getAircraft, getBalance, getRunningFlight } from "@/lib/flights";
 import { formatMoney } from "@/lib/format";
+import { getMyOpenTasks } from "@/lib/tasks";
 import { logPastFlight } from "@/app/flight/actions";
 
 // Nothing on this page is cacheable: it shows a balance and whether the timer
@@ -16,14 +19,21 @@ export const dynamic = "force-dynamic";
  * Home. SPEC.md 3 names the one thing this screen exists for -- start the
  * timer -- so that button is 128px tall and everything else is smaller than it.
  *
- * The snags and next-booking cards from the wireframe are missing because the
- * tables behind them do not exist yet. An empty card that always says the same
- * thing would be worse than no card.
+ * Snags and tasks appear only when there are any, so nothing on this screen is
+ * a card that always says the same thing. The next-booking card from the
+ * wireframe is still missing: that table does not exist yet.
  */
 export default async function Home() {
   const member = await requireMember();
   const [aircraft, running] = await Promise.all([getAircraft(), getRunningFlight()]);
-  const balance = await getBalance(member.id);
+  const [balance, snags, tasks] = await Promise.all([
+    getBalance(member.id),
+    aircraft ? getLiveSnags(aircraft.id) : Promise.resolve([]),
+    getMyOpenTasks(member.id),
+  ]);
+
+  const openSnags = snags.filter((snag) => snag.status === "open").length;
+  const grounded = snags.some((snag) => snag.grounding);
 
   const initials = member.full_name
     .split(/\s+/)
@@ -50,7 +60,7 @@ export default async function Home() {
         </div>
       </header>
 
-      <main className="flex min-h-0 flex-1 flex-col gap-3 px-4 pt-3 pb-4">
+      <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pt-3 pb-4">
         {running ? (
           <Link
             href="/flight"
@@ -81,6 +91,57 @@ export default async function Home() {
             </span>
           </button>
         </form>
+
+        {/*
+          Snags and tasks, in that order, and only when there are any. A snag
+          is about the aeroplane and so is everybody's; the tasks below are
+          only the reader's own, because the whole list lives on its own screen.
+        */}
+        {snags.length > 0 && (
+          <Link
+            href="/aircraft"
+            className={`flex flex-none items-center justify-between gap-3 rounded-[14px] border bg-surface p-3.5 ${
+              grounded ? "border-snag-line" : "border-line"
+            }`}
+          >
+            <span>
+              <span className="field-label block">Snags</span>
+              <span className="block text-base font-semibold">
+                {openSnags > 0
+                  ? `${openSnags} open`
+                  : `${snags.length} to watch`}
+                {openSnags > 0 && snags.length > openSnags
+                  ? `, ${snags.length - openSnags} to watch`
+                  : ""}
+              </span>
+              <span className="block text-[13px] text-muted">
+                {snags[0].title}
+                {snags.length > 1 && ` · and ${snags.length - 1} more`}
+              </span>
+            </span>
+            {grounded && (
+              <span className="flex-none">
+                <Chip tone="snag">Grounded</Chip>
+              </span>
+            )}
+          </Link>
+        )}
+
+        {tasks.length > 0 && (
+          <div className="flex-none rounded-[14px] border border-line bg-surface px-3.5 pb-1">
+            <div className="flex items-center justify-between pt-3">
+              <h2 className="field-label">Your tasks</h2>
+              <Link href="/tasks" className="text-sm font-semibold text-accent">
+                {tasks.length > 3 ? `All ${tasks.length}` : "All tasks"}
+              </Link>
+            </div>
+            <div className="divide-y divide-hairline">
+              {tasks.slice(0, 3).map((task) => (
+                <TaskRow key={task.id} task={task} memberId={member.id} />
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="flex flex-none items-center gap-3 rounded-[14px] border border-line bg-surface p-3.5">
           <div className="flex-1">
