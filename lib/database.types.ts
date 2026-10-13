@@ -676,6 +676,9 @@ isOneToOne: false
 "current_member_id":
 { Args: Record<PropertyKey, never>; Returns: string
                            },
+"distance_m":
+{ Args: { "p_lat1": number,"p_lat2": number,"p_lon1": number,"p_lon2": number }; Returns: number
+                           },
 "fixed_cost_share":
 { Args: { "p_aircraft_id": string,"p_member_id": string,"p_month": string }; Returns: number
                            },
@@ -692,6 +695,9 @@ isOneToOne: false
                            },
 "issue_invoice":
 { Args: { "p_invoice_id": string }; Returns: number
+                           },
+"journey_text_for":
+{ Args: { "p_dest_id": string,"p_origin_id": string }; Returns: string
                            },
 "member_balance":
 { Args: { "p_member_id": string }; Returns: number
@@ -713,6 +719,22 @@ isOneToOne: false
 "ownership_as_of":
 { Args: { "p_aircraft_id": string,"p_on": string }; Returns: {
               "member_id": string,"pct": number
+            }[]
+                           },
+"place_match":
+{ Args: { "p_aircraft_id": string,"p_lat": number,"p_lon": number }; Returns: string
+                           },
+"place_times_used":
+{ Args: { "p_place_id": string }; Returns: number
+                           },
+"places_near":
+{ Args: { "p_lat": number,"p_limit"?: number,"p_lon": number }; Returns: {
+              "distance_m": number,"id": string,"kind": Database["public"]['Enums']["place_kind"],"lat": number,"lon": number,"name": string,"source": Database["public"]['Enums']["place_source"],"times_used": number
+            }[]
+                           },
+"places_used":
+{ Args: { "p_limit"?: number }; Returns: {
+              "id": string,"kind": Database["public"]['Enums']["place_kind"],"last_used_at": string,"lat": number,"lon": number,"name": string,"source": Database["public"]['Enums']["place_source"],"times_used": number
             }[]
                            },
 "rate_components_as_of":

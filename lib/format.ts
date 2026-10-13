@@ -78,3 +78,15 @@ export function formatAccuracy(metres: number | null): string | null {
   if (metres === null) return null;
   return `within ${Math.round(metres)} m`;
 }
+
+/**
+ * `80 m away`, `1.1 km away` -- how far a candidate place is from a fix.
+ *
+ * Switches to kilometres at 1 km because that is the match radius: inside it
+ * the metres matter ("30 m" is the same dock, "900 m" is across the harbour),
+ * and beyond it they do not.
+ */
+export function formatDistance(metres: number): string {
+  if (metres < 1000) return `${Math.round(metres)} m away`;
+  return `${(metres / 1000).toFixed(1)} km away`;
+}

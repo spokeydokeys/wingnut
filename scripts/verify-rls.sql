@@ -2680,5 +2680,304 @@ begin
 end $$;
 rollback;
 
+-- ===========================================================================
+-- 38. GPS fixes are private, full stop -- the owner's decision on 13 Oct 2026.
+--     SPEC.md 4.2 says a co-owner sees only the corrected place, and both
+--     owners of this aeroplane are admins, so "admins may read fixes" would
+--     have meant nobody's fixes were private. There is exactly one policy left
+--     on the table, which makes this a one-layer defence: adding any
+--     permissive read policy back has to make this check fail.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_flight uuid;
+  v_rows   int;
+begin
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set auth_user_id = null;
+  alter table public.member enable trigger member_guard_privileged_columns;
+
+  -- Owner One flies, and the phone records where from.
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0011",
+      "email":"owner1@example.test"}', true);
+  perform public.claim_member_identity();
+
+  insert into public.flight (aircraft_id, pilot_member_id, start_at, end_at)
+  values ('00000000-0000-0000-0000-0000000ac001',
+          '00000000-0000-0000-0000-00000000a001',
+          now() - interval '2 hours', now() - interval '1 hour')
+  returning id into v_flight;
+
+  insert into public.flight_fix (flight_id, which, lat, lon, source)
+  values (v_flight, 'start', 48.4222, -123.3878, 'gps');
+
+  select count(*) into v_rows from public.flight_fix where flight_id = v_flight;
+  if v_rows <> 1 then
+    raise exception 'FAIL  a pilot cannot read back their own fix';
+  end if;
+
+  -- Owner Two is an admin and a co-owner, and must still see nothing.
+  perform set_config('role', 'postgres', true);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0022",
+      "email":"owner2@example.test"}', true);
+  perform set_config('role', 'authenticated', true);
+  perform public.claim_member_identity();
+
+  if (select role from public.member
+       where id = '00000000-0000-0000-0000-00000000a002') <> 'admin' then
+    raise exception 'FAIL  the test is vacuous: owner two is not an admin';
+  end if;
+
+  select count(*) into v_rows from public.flight_fix where flight_id = v_flight;
+  if v_rows <> 0 then
+    raise exception 'FAIL  a co-owning admin can read % of another pilot''s fixes',
+      v_rows;
+  end if;
+
+  -- The flight itself is shared, which is the point of the distinction: the
+  -- co-owner sees that the aeroplane flew and where it is said to have landed,
+  -- just not the raw coordinate.
+  select count(*) into v_rows from public.flight where id = v_flight;
+  if v_rows <> 1 then
+    raise exception 'FAIL  the flight is hidden from the co-owner too';
+  end if;
+
+  perform set_config('role', 'postgres', true);
+  raise notice 'PASS  a GPS fix is readable by its own pilot and nobody else';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 39. A stop fix names the landing place by itself, within the aircraft's
+--     radius and not beyond it, and it never argues with a human. The match
+--     runs on the FIX rather than in the Server Action because the iOS
+--     Shortcut writes fixes too (SPEC.md 7) -- a rule that fires for only one
+--     of two writers is not a rule.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_harbour uuid := '00000000-0000-0000-0000-0000000ad001';
+  v_bay     uuid := '00000000-0000-0000-0000-0000000ad002';
+  v_radius  int;
+  v_flight  uuid;
+  v_rec     public.flight;
+begin
+  select place_match_radius_m into v_radius
+  from public.aircraft where id = '00000000-0000-0000-0000-0000000ac001';
+  if v_radius is distinct from 1000 then
+    raise exception 'FAIL  the test assumes a 1 km radius, the aircraft says %', v_radius;
+  end if;
+
+  -- Just inside: ~300 m north of the harbour.
+  insert into public.flight (aircraft_id, pilot_member_id, start_at, end_at)
+  values ('00000000-0000-0000-0000-0000000ac001',
+          '00000000-0000-0000-0000-00000000a001',
+          now() - interval '2 hours', now() - interval '1 hour')
+  returning id into v_flight;
+
+  insert into public.flight_fix (flight_id, which, lat, lon, source)
+  values (v_flight, 'end', 48.4249, -123.3878, 'gps');
+
+  select * into v_rec from public.flight where id = v_flight;
+  if v_rec.dest_place_id is distinct from v_harbour then
+    raise exception 'FAIL  a fix 300 m from the harbour matched %', v_rec.dest_place_id;
+  end if;
+  if v_rec.landing_place_uncertain then
+    raise exception 'FAIL  a matched landing is still flagged as uncertain';
+  end if;
+  if v_rec.journey_text is not null then
+    raise exception 'FAIL  a journey was written from one end only: %',
+      v_rec.journey_text;
+  end if;
+
+  -- Just outside: ~2.2 km north. Nothing is named, and the flag goes up so the
+  -- Confirm screen can ask whether the clock was left running.
+  update public.flight set dest_place_id = null where id = v_flight;
+  update public.flight_fix set lat = 48.4422
+   where flight_id = v_flight and which = 'end';
+
+  select * into v_rec from public.flight where id = v_flight;
+  if v_rec.dest_place_id is not null then
+    raise exception 'FAIL  a fix 2.2 km away still matched %', v_rec.dest_place_id;
+  end if;
+  if not v_rec.landing_place_uncertain then
+    raise exception 'FAIL  a landing nowhere known is not flagged';
+  end if;
+
+  -- A human says it was the bay. A later fix, even one that matches something
+  -- else, must not overrule them.
+  update public.flight set dest_place_id = v_bay where id = v_flight;
+  update public.flight_fix set lat = 48.4249
+   where flight_id = v_flight and which = 'end';
+
+  select * into v_rec from public.flight where id = v_flight;
+  if v_rec.dest_place_id is distinct from v_bay then
+    raise exception 'FAIL  a fix overwrote the place a human named, with %',
+      v_rec.dest_place_id;
+  end if;
+  if v_rec.landing_place_uncertain then
+    raise exception 'FAIL  naming the landing place left the warning up';
+  end if;
+
+  raise notice 'PASS  a fix names a landing place within the radius, and never overrules a human';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 40. SPEC.md 4.2's journey log line is DERIVED while nobody has touched it
+--     and typed thereafter. Three things have to hold at once: the places
+--     write it, a pilot's own wording survives the places moving, and a
+--     rename corrects every flight that still carries the derived sentence --
+--     including flights that are already billed, because a journey log that
+--     says "Dock" after the dock was renamed is simply wrong.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_harbour uuid := '00000000-0000-0000-0000-0000000ad001';
+  v_bay     uuid := '00000000-0000-0000-0000-0000000ad002';
+  v_flight  uuid;
+  v_billed  uuid;
+  v_text    text;
+begin
+  insert into public.flight (aircraft_id, pilot_member_id, start_at, end_at,
+                             origin_place_id, dest_place_id)
+  values ('00000000-0000-0000-0000-0000000ac001',
+          '00000000-0000-0000-0000-00000000a001',
+          now() - interval '2 hours', now() - interval '1 hour',
+          v_harbour, v_bay)
+  returning id, journey_text into v_flight, v_text;
+
+  if v_text is distinct from
+     'Victoria Harbour water aerodrome → TODO(seed) Example Bay' then
+    raise exception 'FAIL  the derived journey reads "%"', v_text;
+  end if;
+
+  -- Same place at both ends is a circuit, not a mistake.
+  update public.flight set dest_place_id = v_harbour where id = v_flight
+  returning journey_text into v_text;
+  if v_text is distinct from 'Victoria Harbour water aerodrome → local' then
+    raise exception 'FAIL  a circuit reads "%"', v_text;
+  end if;
+
+  -- A rename rewrites it, wherever the flight is. Pick the SEEDED billed
+  -- flight for this: guard_flight_locked freezes a billed row, so if the
+  -- refresh were written as a plain place-to-flight copy it would raise here.
+  select id into v_billed from public.flight
+   where status = 'billed' and origin_place_id = v_harbour and dest_place_id = v_bay
+   limit 1;
+  if v_billed is null then
+    raise exception 'FAIL  the test is vacuous: the seed has no billed flight between these places';
+  end if;
+
+  update public.place set name = 'Tod Inlet dock' where id = v_bay;
+
+  select journey_text into v_text from public.flight where id = v_billed;
+  if v_text is distinct from 'Victoria Harbour water aerodrome → Tod Inlet dock' then
+    raise exception 'FAIL  after the rename a billed flight reads "%"', v_text;
+  end if;
+
+  -- But a sentence a pilot typed is theirs. Renaming the place must not touch
+  -- it, and neither must moving the places.
+  update public.flight
+     set journey_text = 'Up the inlet and back for coffee'
+   where id = v_flight;
+
+  update public.place set name = 'Victoria Harbour' where id = v_harbour;
+  select journey_text into v_text from public.flight where id = v_flight;
+  if v_text is distinct from 'Up the inlet and back for coffee' then
+    raise exception 'FAIL  a rename rewrote a pilot''s own journey as "%"', v_text;
+  end if;
+
+  update public.flight set dest_place_id = v_bay where id = v_flight
+  returning journey_text into v_text;
+  if v_text is distinct from 'Up the inlet and back for coffee' then
+    raise exception 'FAIL  changing a place rewrote a pilot''s own journey as "%"', v_text;
+  end if;
+
+  -- Blanking it asks for the derived sentence back, which is the only way back.
+  update public.flight set journey_text = '   ' where id = v_flight
+  returning journey_text into v_text;
+  if v_text is distinct from 'Victoria Harbour → Tod Inlet dock' then
+    raise exception 'FAIL  clearing the journey gave "%"', v_text;
+  end if;
+
+  raise notice 'PASS  a journey log line is derived until it is typed, and a rename fixes the derived ones';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 41. A place that any flight names cannot be deleted. Without the guard the
+--     FK falls back to ON DELETE SET NULL and silently blanks the journey;
+--     the manager offers a rename instead.
+--
+--     Deliberately a CONFIRMED flight, not one of the seeded billed ones. A
+--     billed flight is frozen by guard_flight_locked, which refuses the
+--     cascade for its own reasons -- so testing against one would have passed
+--     with place_guard_in_use dropped, and did, on the first draft of this.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_place  uuid;
+  v_flight uuid;
+  v_rows   int;
+  v_failed boolean := false;
+begin
+  insert into public.place (company_id, name, kind, source, lat, lon)
+  values ('00000000-0000-0000-0000-00000000c000', 'Typo Bay', 'bay', 'saved',
+          49.0, -123.0)
+  returning id into v_place;
+
+  insert into public.flight (aircraft_id, pilot_member_id, status,
+                             start_at, end_at, origin_place_id, dest_place_id)
+  values ('00000000-0000-0000-0000-0000000ac001',
+          '00000000-0000-0000-0000-00000000a001', 'confirmed',
+          now() - interval '2 hours', now() - interval '1 hour',
+          v_place, v_place)
+  returning id into v_flight;
+
+  begin
+    delete from public.place where id = v_place;
+  exception when others then
+    v_failed := true;
+  end;
+
+  if not v_failed then
+    raise exception 'FAIL  a place named by a flight was deleted';
+  end if;
+
+  select count(*) into v_rows from public.place where id = v_place;
+  if v_rows <> 1 then
+    raise exception 'FAIL  the place is gone after a refused delete';
+  end if;
+
+  -- And the journey it is in did not get blanked on the way through.
+  select count(*) into v_rows from public.flight
+   where id = v_flight and origin_place_id = v_place;
+  if v_rows <> 1 then
+    raise exception 'FAIL  the refused delete still blanked the flight''s place';
+  end if;
+
+  -- Once nothing names it, it goes. Otherwise the list could only ever grow,
+  -- and a typo would be permanent.
+  update public.flight set origin_place_id = null, dest_place_id = null
+   where id = v_flight;
+
+  delete from public.place where id = v_place;
+  select count(*) into v_rows from public.place where id = v_place;
+  if v_rows <> 0 then
+    raise exception 'FAIL  an unused place could not be deleted';
+  end if;
+
+  raise notice 'PASS  a place in use cannot be deleted, an unused one can';
+end $$;
+rollback;
+
 \echo ''
 \echo 'All core schema checks passed.'

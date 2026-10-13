@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { signOut } from "@/app/auth/actions";
 import { TabBar } from "@/components/tab-bar";
 import { requireMember } from "@/lib/dal";
@@ -27,9 +29,34 @@ export default async function More() {
           </div>
         </div>
 
+        <Link
+          href="/more/places"
+          className="flex items-center justify-between rounded-[14px] border border-line bg-surface p-3.5"
+        >
+          <span>
+            <span className="block text-base font-semibold">Saved places</span>
+            <span className="block text-[13px] text-muted">
+              Rename a dock, or add one before you fly there
+            </span>
+          </span>
+          <svg
+            aria-hidden="true"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M9 5l7 7-7 7" />
+          </svg>
+        </Link>
+
         <p className="rounded-[14px] border border-line bg-surface p-3.5 text-[15px] text-muted">
-          Bookings, reserves, saved places, ownership shares and the iOS
-          Shortcut token will appear here as those phases land.
+          Bookings, reserves, ownership shares and the iOS Shortcut token will
+          appear here as those phases land.
         </p>
 
         <form action={signOut}>

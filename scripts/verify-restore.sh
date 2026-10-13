@@ -590,5 +590,254 @@ begin
 end $$;
 SQL
 
+# Places are the one part of the schema written specifically to survive this
+# script: the obvious implementation is PostGIS, and PostGIS is exactly what a
+# stock image does not have. So the arithmetic, the matching and the journey
+# wording are all plain SQL, and this is where that claim is checked.
+echo "==> Checking places and the journey log"
+psql_in <<'SQL'
+do $$
+declare
+  v_company  uuid;
+  v_air      uuid;
+  v_pilot    uuid := '00000000-0000-0000-0000-0000000a00f0';
+  v_narrows  uuid;
+  v_lagoon   uuid;
+  v_unused   uuid;
+  v_landed   uuid;
+  v_trip     uuid;
+  v_circuit  uuid;
+  v_typed    uuid;
+  v_over     uuid;
+  v_top      uuid;
+  v_metres   numeric;
+  v_radius   int;
+  v_count    int;
+  v_base     bigint;
+  v_text     text;
+  v_flag     boolean;
+  v_blocked  text;
+begin
+  -- Without this the rest of the section proves nothing: if the throwaway had
+  -- PostGIS, a distance_m that secretly depended on it would still work here
+  -- and fail on the self-hosted box that does not.
+  if exists (select 1 from pg_extension where extname = 'postgis') then
+    raise exception 'FAIL  this check is vacuous: the throwaway image has PostGIS';
+  end if;
+
+  select c.id into v_company from public.company c limit 1;
+  select a.id into v_air from public.aircraft a limit 1;
+
+  -- places_used and place_times_used are deliberately scoped to the caller, so
+  -- they need one. This is the roster row claimed near the top of the script.
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a00f1",
+      "email":"restore-check@example.invalid"}', true);
+  if public.current_member_id() is distinct from v_pilot then
+    raise exception 'FAIL  the restore pilot could not be resolved for places';
+  end if;
+
+  -- A degree of latitude, which is a figure anyone can check against a chart:
+  -- 111.2 km. Loose bounds on purpose -- the point is that haversine came back
+  -- computing distances, not that it agrees to the metre.
+  v_metres := public.distance_m(48.0, -123.0, 49.0, -123.0);
+  if v_metres not between 111000 and 111400 then
+    raise exception 'FAIL  a degree of latitude measured % m after restore', v_metres;
+  end if;
+  if public.distance_m(48.42, -123.39, 48.42, -123.39) is distinct from 0 then
+    raise exception 'FAIL  a place is not where it is after restore';
+  end if;
+
+  -- Well away from the seeded places, so nothing but these rows can answer.
+  insert into public.place (company_id, name, kind, lat, lon, created_by)
+  values (v_company, 'Restore Narrows', 'dock', 50.000000, -125.000000, v_pilot)
+  returning id into v_narrows;
+  insert into public.place (company_id, name, kind, lat, lon, created_by)
+  values (v_company, 'Restore Lagoon', 'bay', 50.100000, -125.100000, v_pilot)
+  returning id into v_lagoon;
+  insert into public.place (company_id, name, kind, lat, lon, created_by)
+  values (v_company, 'Restore Shoal', 'other', 49.000000, -124.000000, v_pilot)
+  returning id into v_unused;
+
+  v_base := public.place_times_used(v_narrows);
+
+  select a.place_match_radius_m into v_radius
+  from public.aircraft a where a.id = v_air;
+  if v_radius <> 1000 then
+    raise exception 'FAIL  this check assumes a 1 km match radius, found % m', v_radius;
+  end if;
+
+  -- 556 m north of the dock: inside the kilometre, so the fix IS the dock.
+  if public.place_match(v_air, 50.005, -125.0) is distinct from v_narrows then
+    raise exception 'FAIL  a fix 556 m from a dock matched % after restore',
+      public.place_match(v_air, 50.005, -125.0);
+  end if;
+
+  -- 1.7 km north: outside it, and nothing else is within 100 km, so null.
+  if public.place_match(v_air, 50.015, -125.0) is not null then
+    raise exception 'FAIL  a fix 1.7 km out still matched a dock after restore';
+  end if;
+
+  -- And the radius really is read off the aeroplane rather than hard-coded:
+  -- widen it and the same fix matches. Varied both ways on purpose -- a radius
+  -- only ever tested from one side proves nothing about where the line is.
+  update public.aircraft set place_match_radius_m = 3000 where id = v_air;
+  if public.place_match(v_air, 50.015, -125.0) is distinct from v_narrows then
+    raise exception 'FAIL  widening the match radius matched nothing after restore';
+  end if;
+  update public.aircraft set place_match_radius_m = v_radius where id = v_air;
+
+  raise notice 'PASS  distances and the match radius work without PostGIS';
+
+  -- A stop fix names the landing place by itself, because the Shortcut writes
+  -- fixes too and the rule has to live under both writers.
+  insert into public.flight (aircraft_id, pilot_member_id, status, start_at, end_at)
+  values (v_air, v_pilot, 'confirmed',
+          now() - interval '3 hours', now() - interval '2 hours')
+  returning id into v_landed;
+  insert into public.flight_fix (flight_id, which, lat, lon, accuracy_m)
+  values (v_landed, 'end', 50.004000, -125.000000, 9);
+
+  select f.dest_place_id, f.landing_place_uncertain, f.journey_text
+    into v_top, v_flag, v_text
+  from public.flight f where f.id = v_landed;
+  if v_top is distinct from v_narrows or v_flag then
+    raise exception 'FAIL  a fix at the dock named % (uncertain: %) after restore',
+      v_top, v_flag;
+  end if;
+  -- Half a journey is never stored; the origin here is still unknown.
+  if v_text is not null then
+    raise exception 'FAIL  a one-ended flight stored the journey "%" after restore', v_text;
+  end if;
+
+  -- And a stop nowhere known raises the flag instead of guessing.
+  insert into public.flight (aircraft_id, pilot_member_id, status, start_at, end_at)
+  values (v_air, v_pilot, 'confirmed',
+          now() - interval '5 hours', now() - interval '4 hours')
+  returning id into v_trip;
+  insert into public.flight_fix (flight_id, which, lat, lon, accuracy_m)
+  values (v_trip, 'end', 51.500000, -127.500000, 11);
+  select f.dest_place_id is null and f.landing_place_uncertain into v_flag
+  from public.flight f where f.id = v_trip;
+  if not v_flag then
+    raise exception 'FAIL  a stop 200 km from anywhere did not ask after restore';
+  end if;
+
+  -- Naming the landing place is what clears the flag, whoever named it.
+  update public.flight set dest_place_id = v_lagoon where id = v_trip;
+  select f.dest_place_id, f.landing_place_uncertain into v_top, v_flag
+  from public.flight f where f.id = v_trip;
+  if v_top is distinct from v_lagoon or v_flag then
+    raise exception 'FAIL  naming a landing place left % (uncertain: %) after restore',
+      v_top, v_flag;
+  end if;
+
+  -- And a fix never overrules a human. The fix below lands exactly on Restore
+  -- Lagoon, so it HAS a match to impose -- which is the only way this proves
+  -- anything. The pilot said the dock, so the dock it stays.
+  insert into public.flight (aircraft_id, pilot_member_id, status, start_at, end_at,
+                             dest_place_id)
+  values (v_air, v_pilot, 'confirmed',
+          now() - interval '11 hours', now() - interval '10 hours', v_narrows)
+  returning id into v_over;
+  insert into public.flight_fix (flight_id, which, lat, lon, accuracy_m)
+  values (v_over, 'end', 50.100000, -125.100000, 7);
+  select f.dest_place_id into v_top from public.flight f where f.id = v_over;
+  if v_top is distinct from v_narrows then
+    raise exception 'FAIL  a fix overwrote the place a human named, with % after restore',
+      v_top;
+  end if;
+
+  raise notice 'PASS  a GPS fix names the landing place, or asks, on vanilla Postgres';
+
+  -- The journey log line: derived from the two ends until somebody types one.
+  update public.flight set origin_place_id = v_narrows where id = v_trip;
+  select f.journey_text into v_text from public.flight f where f.id = v_trip;
+  if v_text is distinct from 'Restore Narrows → Restore Lagoon' then
+    raise exception 'FAIL  the derived journey restored as "%"', v_text;
+  end if;
+
+  insert into public.flight (aircraft_id, pilot_member_id, status, start_at, end_at,
+                             origin_place_id, dest_place_id)
+  values (v_air, v_pilot, 'confirmed',
+          now() - interval '7 hours', now() - interval '6 hours',
+          v_narrows, v_narrows)
+  returning id into v_circuit;
+  select f.journey_text into v_text from public.flight f where f.id = v_circuit;
+  if v_text is distinct from 'Restore Narrows → local' then
+    raise exception 'FAIL  a circuit restored as "%"', v_text;
+  end if;
+
+  insert into public.flight (aircraft_id, pilot_member_id, status, start_at, end_at,
+                             origin_place_id, dest_place_id, journey_text)
+  values (v_air, v_pilot, 'confirmed',
+          now() - interval '9 hours', now() - interval '8 hours',
+          v_narrows, v_lagoon, 'Up the inlet for lunch')
+  returning id into v_typed;
+
+  -- The rename that the saved-places manager exists for. It must correct every
+  -- sentence this code wrote -- including the co-owner's, which is why the
+  -- trigger is security definer -- and leave the typed one alone.
+  update public.place set name = 'Restore Narrows dock' where id = v_narrows;
+
+  select f.journey_text into v_text from public.flight f where f.id = v_trip;
+  if v_text is distinct from 'Restore Narrows dock → Restore Lagoon' then
+    raise exception 'FAIL  a rename left the derived journey as "%"', v_text;
+  end if;
+  select f.journey_text into v_text from public.flight f where f.id = v_circuit;
+  if v_text is distinct from 'Restore Narrows dock → local' then
+    raise exception 'FAIL  a rename left the circuit as "%"', v_text;
+  end if;
+  select f.journey_text into v_text from public.flight f where f.id = v_typed;
+  if v_text is distinct from 'Up the inlet for lunch' then
+    raise exception 'FAIL  a rename rewrote a pilot''s own journey as "%"', v_text;
+  end if;
+
+  -- Clearing the field is how a pilot asks for the derived sentence back.
+  update public.flight set journey_text = '   ' where id = v_typed;
+  select f.journey_text into v_text from public.flight f where f.id = v_typed;
+  if v_text is distinct from 'Restore Narrows dock → Restore Lagoon' then
+    raise exception 'FAIL  clearing a typed journey restored as "%"', v_text;
+  end if;
+
+  raise notice 'PASS  journey text derives, survives typing and follows a rename after restore';
+
+  -- Nearest first, and the caller's own usage counted. Deltas rather than
+  -- totals: the timer check above already flew this member somewhere.
+  select n.id into v_top from public.places_near(50.0, -125.0, 3) n limit 1;
+  if v_top is distinct from v_narrows then
+    raise exception 'FAIL  places_near put % first after restore', v_top;
+  end if;
+  if public.place_times_used(v_narrows) - v_base <> 5 then
+    raise exception 'FAIL  the dock counts % flights after restore, expected %',
+      public.place_times_used(v_narrows), v_base + 5;
+  end if;
+  select u.id into v_top from public.places_used(6) u limit 1;
+  if v_top is distinct from v_narrows then
+    raise exception 'FAIL  places_used put % first after restore', v_top;
+  end if;
+
+  -- Deleting a place a flight names would quietly empty that flight's origin,
+  -- because the foreign keys are ON DELETE SET NULL. An unused one is fine.
+  begin
+    delete from public.place where id = v_narrows;
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  select count(*) into v_count from public.place where id = v_narrows;
+  if v_blocked is null or v_count <> 1 then
+    raise exception 'FAIL  a place on 5 flights was deleted after restore';
+  end if;
+
+  delete from public.place where id = v_unused;
+  select count(*) into v_count from public.place where id = v_unused;
+  if v_count <> 0 then
+    raise exception 'FAIL  an unused place could not be deleted after restore';
+  end if;
+
+  raise notice 'PASS  a place in use is protected and an unused one is not, on vanilla Postgres';
+end $$;
+SQL
+
 echo
 echo "Escape hatch verified: the export restores and runs on vanilla PostgreSQL."

@@ -303,34 +303,69 @@ values
 insert into public.invoice_counter (company_id, next_number)
 values ('00000000-0000-0000-0000-00000000c000', 3);
 
+-- ---------------------------------------------------------------------------
+-- Places
+--
+-- Saved places only, by the owner's decision: no OurAirports or OSM import, so
+-- the list grows as the aeroplane goes places. Both rows below are 'saved'
+-- rather than 'ourairports' for that reason -- the source column records where
+-- a row CAME from, and these came from this file.
+--
+-- TODO(seed) verify the Victoria Harbour coordinates against the Canada Flight
+-- Supplement before relying on the 1 km match. It is the one real place in the
+-- spec; everything else here is invented and should be deleted rather than
+-- corrected.
+-- ---------------------------------------------------------------------------
+
+insert into public.place (id, company_id, name, kind, source, lat, lon)
+values
+  ('00000000-0000-0000-0000-0000000ad001',
+   '00000000-0000-0000-0000-00000000c000',
+   'Victoria Harbour water aerodrome', 'water_aerodrome', 'saved',
+   48.422200, -123.387800),
+  ('00000000-0000-0000-0000-0000000ad002',
+   '00000000-0000-0000-0000-00000000c000',
+   'TODO(seed) Example Bay', 'bay', 'saved',
+   48.650000, -123.400000);
+
 -- September's flights, locked to the invoice they were billed on. 1.4 hr and
 -- 0.9 hr; billed_hours and est_tach_hours are derived by the trigger.
+--
+-- journey_text is deliberately left out: the flights name their two ends, and
+-- flight_set_journey builds "Victoria Harbour water aerodrome → TODO(seed)
+-- Example Bay" from them. Writing the sentence here as well would mean the seed
+-- could agree with itself while the trigger was broken.
 insert into public.flight
   (aircraft_id, pilot_member_id, status, start_at, end_at, tach_factor_used,
-   invoice_id, journey_text)
+   invoice_id, origin_place_id, dest_place_id)
 values
   ('00000000-0000-0000-0000-0000000ac001',
    '00000000-0000-0000-0000-00000000a001', 'billed',
    timestamptz '2026-09-12 10:00 America/Vancouver',
    timestamptz '2026-09-12 11:24 America/Vancouver', 1.300,
-   '00000000-0000-0000-0000-00000001f001', 'Placeholder: local'),
+   '00000000-0000-0000-0000-00000001f001',
+   '00000000-0000-0000-0000-0000000ad001',
+   '00000000-0000-0000-0000-0000000ad002'),
   ('00000000-0000-0000-0000-0000000ac001',
    '00000000-0000-0000-0000-00000000a001', 'billed',
    timestamptz '2026-09-26 13:00 America/Vancouver',
    timestamptz '2026-09-26 13:54 America/Vancouver', 1.300,
-   '00000000-0000-0000-0000-00000001f001', 'Placeholder: local');
+   '00000000-0000-0000-0000-00000001f001',
+   '00000000-0000-0000-0000-0000000ad002',
+   '00000000-0000-0000-0000-0000000ad001');
 
 -- October's flight is still confirmed, not billed: the month is open, the
 -- flight is still editable, and it is what "October so far" is drafted from.
 insert into public.flight
   (aircraft_id, pilot_member_id, status, start_at, end_at, tach_factor_used,
-   journey_text)
+   origin_place_id, dest_place_id)
 values
   ('00000000-0000-0000-0000-0000000ac001',
    '00000000-0000-0000-0000-00000000a001', 'confirmed',
    timestamptz '2026-10-05 09:00 America/Vancouver',
    timestamptz '2026-10-05 11:06 America/Vancouver', 1.300,
-   'Placeholder: local');
+   '00000000-0000-0000-0000-0000000ad001',
+   '00000000-0000-0000-0000-0000000ad001');
 
 -- One line per rate component, because the general ledger wants fuel, reserve
 -- and operating revenue in different accounts. The pilot sees them summed.

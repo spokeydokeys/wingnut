@@ -207,6 +207,12 @@ export type ConfirmInput = {
   pilotMemberId: string;
   actualTachHours: string;
   notes: string;
+  /**
+   * SPEC.md 4.2's journey log line. Blank is meaningful rather than missing:
+   * `flight_set_journey` fills a blank with "Origin → Destination", so clearing
+   * the field is how a pilot asks for the derived sentence back.
+   */
+  journeyText: string;
 };
 
 /**
@@ -258,6 +264,7 @@ export async function saveFlight(
       pilot_member_id: input.pilotMemberId,
       actual_tach_hours: actualTachHours,
       notes: input.notes.trim() || null,
+      journey_text: input.journeyText.trim() || null,
     })
     .eq("id", input.flightId)
     .eq("status", "draft")

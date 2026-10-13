@@ -29,6 +29,8 @@ export function ConfirmForm({
   tachFactor,
   actualTachHours,
   notes,
+  journeyText,
+  derivedJourney,
   canChangePilot,
 }: {
   flightId: string;
@@ -39,6 +41,13 @@ export function ConfirmForm({
   tachFactor: number;
   actualTachHours: string;
   notes: string;
+  journeyText: string;
+  /**
+   * What the places would say, straight from `journey_text_for`. Null until
+   * both ends are named. Used only to tell the pilot whether the line they are
+   * looking at is theirs or the database's.
+   */
+  derivedJourney: string | null;
   canChangePilot: boolean;
 }) {
   const [start, setStart] = useState(() => toInputValue(startAt));
@@ -46,6 +55,7 @@ export function ConfirmForm({
   const [pilot, setPilot] = useState(pilotMemberId);
   const [tach, setTach] = useState(actualTachHours);
   const [note, setNote] = useState(notes);
+  const [journey, setJourney] = useState(journeyText);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -66,6 +76,7 @@ export function ConfirmForm({
         pilotMemberId: pilot,
         actualTachHours: tach,
         notes: note,
+        journeyText: journey,
       });
       // On success the action redirects and never returns, so anything here is
       // a refusal worth putting in front of the pilot.
@@ -173,6 +184,25 @@ export function ConfirmForm({
           placeholder="Enter if you looked at it"
           className={FIELD}
         />
+      </div>
+
+      <div>
+        <label htmlFor="journey" className="field-label mb-1.5 block">
+          Journey log entry
+        </label>
+        <input
+          id="journey"
+          type="text"
+          value={journey}
+          onChange={(event) => setJourney(event.target.value)}
+          placeholder="Set the places above, or type the journey"
+          className={FIELD}
+        />
+        <p className="mt-1.5 text-[13px] text-muted">
+          {journey.trim() === "" || journey === derivedJourney
+            ? "Written from the places above. Type over it to say it your own way."
+            : "Yours. Clear the field to go back to the places above."}
+        </p>
       </div>
 
       <div>
