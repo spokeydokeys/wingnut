@@ -2979,5 +2979,475 @@ begin
 end $$;
 rollback;
 
+-- ===========================================================================
+-- 42. The turn advances from whoever COMPLETED the last chore, not from
+--     whoever it was assigned to. Covering for someone must not cost them
+--     their turn, and handing yours over must not buy you one.
+--
+--     The whole check turns on the assignee and the completer being DIFFERENT
+--     people -- with them equal, "advances from the completer" and "advances
+--     from the assignee" are the same sentence and the mutation passes. So
+--     that difference is asserted before anything is measured.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_series uuid;
+  v_task   uuid;
+  v_next   uuid;
+  v_asgn   uuid;
+  v_done   uuid;
+begin
+  insert into public.task_series (company_id, title, recurrence, interval_days)
+  values ('00000000-0000-0000-0000-00000000c000', 'Wash the floats',
+          'interval_days', 90)
+  returning id into v_series;
+
+  -- First one out of the gate goes to the top of the rotation.
+  v_next := public.task_next_assignee(v_series);
+  if v_next is distinct from '00000000-0000-0000-0000-00000000a001' then
+    raise exception 'FAIL  the first turn went to % and not the top of the rotation',
+      v_next;
+  end if;
+
+  insert into public.task (company_id, series_id, title, assignee_member_id,
+                           due_date)
+  values ('00000000-0000-0000-0000-00000000c000', v_series, 'Wash the floats',
+          v_next, public.aircraft_today())
+  returning id into v_task;
+
+  -- Owner Two does it even though it landed on Owner One.
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0022",
+      "email":"owner2@example.test"}', true);
+  perform public.claim_member_identity();
+
+  update public.task set status = 'done' where id = v_task;
+
+  perform set_config('role', 'postgres', true);
+
+  select t.assignee_member_id, t.completed_by into v_asgn, v_done
+  from public.task t where t.id = v_task;
+
+  if v_asgn is null or v_done is null or v_asgn = v_done then
+    raise exception 'FAIL  this check is vacuous: assignee % and completer % must differ',
+      v_asgn, v_done;
+  end if;
+
+  -- Owner Two did it, so Owner Two's turn is spent and the rotation wraps back
+  -- to the top -- which is Owner One, who has still never done one.
+  select t.assignee_member_id into v_next
+  from public.task t
+  where t.series_id = v_series and t.status = 'open';
+
+  if v_next is distinct from '00000000-0000-0000-0000-00000000a001' then
+    raise exception 'FAIL  the next turn went to %, not to the member after the completer',
+      v_next;
+  end if;
+
+  raise notice 'PASS  the rotation advances from the member who did the work';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 43. Closing a month creates the reconcile chore once, however many times the
+--     month is closed -- and a second close does not resurrect one that has
+--     already been done.
+--
+--     close_month is re-runnable on purpose (an admin who spots a wrong flight
+--     time fixes it and closes again), so "spawn the chore" had to be made
+--     idempotent rather than merely called once.
+--
+--     Asserting "no extra rows appeared" alone would pass on a database that
+--     never created the chore at all, so the first close's row is asserted
+--     first and the later counts are deltas from it.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_series uuid;
+  v_month  date := date_trunc('month', public.aircraft_today())::date;
+  v_rows   int;
+  v_task   uuid;
+  v_made   int;
+begin
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0011",
+      "email":"owner1@example.test"}', true);
+  perform public.claim_member_identity();
+
+  insert into public.task_series (company_id, title, recurrence,
+                                  due_offset_days)
+  values ('00000000-0000-0000-0000-00000000c000', 'Reconcile the test month',
+          'month_close', 10)
+  returning id into v_series;
+
+  perform public.close_month('00000000-0000-0000-0000-0000000ac001', v_month);
+
+  select count(*) into v_rows from public.task
+   where series_id = v_series and period_month = v_month;
+  if v_rows <> 1 then
+    raise exception 'FAIL  closing the month created % reconcile chores, not 1',
+      v_rows;
+  end if;
+
+  select id into v_task from public.task
+   where series_id = v_series and period_month = v_month;
+
+  -- Dated from the end of the month it is about plus the series' grace, not
+  -- from the day the admin got round to closing.
+  if (select due_date from public.task where id = v_task)
+     <> (v_month + interval '1 month - 1 day')::date + 10 then
+    raise exception 'FAIL  the reconcile chore is due %, not ten days after the month end',
+      (select due_date from public.task where id = v_task);
+  end if;
+
+  -- Close it again, exactly as a corrected flight time would.
+  perform public.close_month('00000000-0000-0000-0000-0000000ac001', v_month);
+
+  select count(*) into v_rows from public.task
+   where series_id = v_series and period_month = v_month;
+  if v_rows <> 1 then
+    raise exception 'FAIL  re-closing the month left % reconcile chores', v_rows;
+  end if;
+  if (select id from public.task
+       where series_id = v_series and period_month = v_month) <> v_task then
+    raise exception 'FAIL  re-closing replaced the chore with a different row';
+  end if;
+
+  -- And once it is done, closing again must not hand it back.
+  update public.task set status = 'done' where id = v_task;
+  perform public.close_month('00000000-0000-0000-0000-0000000ac001', v_month);
+
+  select count(*) into v_rows from public.task
+   where series_id = v_series and period_month = v_month and status = 'open';
+  if v_rows <> 0 then
+    raise exception 'FAIL  closing again resurrected a reconcile chore already done';
+  end if;
+
+  -- The following month is a different chore, which is the other half of the
+  -- claim: idempotent per period, not merely "only ever one". Counted on this
+  -- series alone -- the seeded reconcile series spawns here too, so the
+  -- function's own return value is not the number under test.
+  v_made := public.task_spawn_for_month(
+    '00000000-0000-0000-0000-00000000c000',
+    (v_month + interval '1 month')::date);
+  if v_made < 1 then
+    raise exception 'FAIL  the next month got nothing';
+  end if;
+
+  select count(*) into v_rows from public.task
+   where series_id = v_series
+     and period_month = (v_month + interval '1 month')::date;
+  if v_rows <> 1 then
+    raise exception 'FAIL  the next month got % chores on this series, not 1',
+      v_rows;
+  end if;
+
+  perform set_config('role', 'postgres', true);
+  raise notice 'PASS  closing a month creates the reconcile chore exactly once';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 44. The rotation is the ACTIVE roster, and a chore marked admins_only never
+--     lands on a pilot. The bank reconciliation is done in the accounting
+--     system, which a non-admin renter has no login for, so a turn handed to
+--     one is a turn nobody takes.
+--
+--     Varied both ways on purpose: the same pilot must be excluded from an
+--     admins_only series and included in one that is not, or "excluded" could
+--     just mean the rotation never contained anybody but the owners.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_pilot  uuid;
+  v_series uuid;
+  v_open   uuid;
+  v_rows   int;
+begin
+  -- A third person on the roster, deliberately NOT an admin and deliberately
+  -- named so they sort first -- otherwise "the pilot was skipped" could just be
+  -- "the pilot was last in line anyway".
+  insert into public.member (full_name, email, role)
+  values ('Aaron Renter', 'renter@example.test', 'pilot')
+  returning id into v_pilot;
+
+  insert into public.task_series (company_id, title, recurrence, interval_days,
+                                  admins_only)
+  values ('00000000-0000-0000-0000-00000000c000', 'Admin only', 'interval_days',
+          30, true)
+  returning id into v_series;
+
+  select count(*) into v_rows from public.task_rotation(v_series)
+   where member_id = v_pilot;
+  if v_rows <> 0 then
+    raise exception 'FAIL  a pilot is in the rotation for an admins-only chore';
+  end if;
+
+  if (select member_id from public.task_rotation(v_series) order by turn limit 1)
+     = v_pilot then
+    raise exception 'FAIL  an admins-only chore was handed to a pilot';
+  end if;
+
+  -- Same person, same roster, a chore anyone can do: now they take turns, and
+  -- being first by name they are up first.
+  update public.task_series set admins_only = false where id = v_series;
+
+  if (select member_id from public.task_rotation(v_series) order by turn limit 1)
+     is distinct from v_pilot then
+    raise exception 'FAIL  a pilot is excluded from a chore that is not admins-only';
+  end if;
+
+  -- Leaving the roster takes you out of the queue, whichever kind of chore.
+  -- The guard is out of the way because this session has no signed-in admin,
+  -- not because the rule is being tested here -- check 2 owns that.
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set is_active = false where id = v_pilot;
+  alter table public.member enable trigger member_guard_privileged_columns;
+  select count(*) into v_rows from public.task_rotation(v_series)
+   where member_id = v_pilot;
+  if v_rows <> 0 then
+    raise exception 'FAIL  an inactive member is still in the rotation';
+  end if;
+
+  -- And a turn taken by someone who has since left does not strand the series:
+  -- the next one goes to the top of what is left rather than to nobody.
+  insert into public.task (company_id, series_id, title, assignee_member_id,
+                           due_date, status)
+  values ('00000000-0000-0000-0000-00000000c000', v_series, 'Admin only',
+          v_pilot, public.aircraft_today(), 'open')
+  returning id into v_open;
+
+  update public.task set status = 'done', completed_by = v_pilot,
+                         completed_at = now()
+   where id = v_open;
+  -- The stamp trigger owns those columns, so state the fact the way the
+  -- trigger would have, with it out of the way.
+  alter table public.task disable trigger task_stamp_completed;
+  update public.task set completed_by = v_pilot where id = v_open;
+  alter table public.task enable trigger task_stamp_completed;
+
+  if public.task_next_assignee(v_series) is null then
+    raise exception 'FAIL  a departed member''s turn left the rotation with nobody';
+  end if;
+  if public.task_next_assignee(v_series) = v_pilot then
+    raise exception 'FAIL  the next turn went back to the member who has left';
+  end if;
+  if public.task_next_assignee(v_series) is distinct from
+     (select member_id from public.task_rotation(v_series) order by turn limit 1) then
+    raise exception 'FAIL  a departed completer did not send the turn to the top';
+  end if;
+
+  raise notice 'PASS  the rotation is the active roster, and admin chores stay with admins';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 45. Who did the chore is stamped by the database, not sent by the caller.
+--     Every member may tick any task off -- the owner who reconciles the month
+--     is often not the one it landed on -- so the policies are deliberately
+--     permissive and the stamp is the ONLY thing standing between a crafted
+--     request and "Owner One did the bank rec". One layer, on purpose, which
+--     is why removing it has to make this fail.
+--
+--     Un-ticking forgets the stamp, for the same reason re-opening a snag
+--     forgets who cleared it: it described a state the task is no longer in.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_task uuid;
+  v_rec  record;
+begin
+  insert into public.task (company_id, title, due_date, created_by)
+  values ('00000000-0000-0000-0000-00000000c000', 'Ring the hangar owner',
+          public.aircraft_today(), '00000000-0000-0000-0000-00000000a001')
+  returning id into v_task;
+
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0022",
+      "email":"owner2@example.test"}', true);
+  perform public.claim_member_identity();
+
+  -- Owner Two ticks it, and claims Owner One did it.
+  update public.task
+     set status = 'done',
+         completed_by = '00000000-0000-0000-0000-00000000a001',
+         completed_at = timestamptz '2020-01-01 00:00:00-08'
+   where id = v_task;
+
+  select completed_by, completed_at into v_rec from public.task where id = v_task;
+
+  if v_rec.completed_by is distinct from '00000000-0000-0000-0000-00000000a002' then
+    raise exception 'FAIL  the task records % as having done it', v_rec.completed_by;
+  end if;
+  if v_rec.completed_at < public.aircraft_today() - 1 then
+    raise exception 'FAIL  the caller chose when the task was done: %',
+      v_rec.completed_at;
+  end if;
+
+  -- Un-tick: the stamp goes, and the check constraint stays satisfiable from a
+  -- form that only ever sends the status.
+  update public.task set status = 'open' where id = v_task;
+  select completed_by, completed_at into v_rec from public.task where id = v_task;
+  if v_rec.completed_by is not null or v_rec.completed_at is not null then
+    raise exception 'FAIL  an un-ticked task still says who did it';
+  end if;
+
+  perform set_config('role', 'postgres', true);
+  raise notice 'PASS  the database stamps who finished a task, not the caller';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 46. A pilot cannot rewrite the rotation. task_series decides whose evening
+--     gets spent on the books, so it is shared configuration and admin-only to
+--     write, exactly like maintenance_item.
+--
+--     Two layers removed by the mutation, because SELECT is granted to every
+--     member: the admin-write policy has to go AND a permissive write policy
+--     has to be added before this can fail.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_pilot   uuid;
+  v_series  uuid := '00000000-0000-0000-0000-0000000ae001';
+  v_rows    int;
+  v_refused boolean := false;
+begin
+  alter table public.member disable trigger member_guard_privileged_columns;
+  insert into public.member (full_name, email, role, auth_user_id)
+  values ('Aaron Renter', 'renter@example.test', 'pilot',
+          '00000000-0000-0000-0000-0000000a0033')
+  returning id into v_pilot;
+  alter table public.member enable trigger member_guard_privileged_columns;
+
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0033",
+      "email":"renter@example.test"}', true);
+
+  if public.current_member_id() is distinct from v_pilot then
+    raise exception 'FAIL  the test pilot could not be resolved';
+  end if;
+  if public.is_admin() then
+    raise exception 'FAIL  this check is vacuous: the test pilot is an admin';
+  end if;
+
+  -- They can see the chore list, which is the point of the distinction.
+  select count(*) into v_rows from public.task_series where id = v_series;
+  if v_rows <> 1 then
+    raise exception 'FAIL  a pilot cannot even read the chore list';
+  end if;
+
+  update public.task_series set admins_only = false where id = v_series;
+  if (select admins_only from public.task_series where id = v_series) then
+    null;
+  else
+    raise exception 'FAIL  a pilot opened an admins-only chore up to themselves';
+  end if;
+
+  update public.task_series set is_active = false where id = v_series;
+  if not (select is_active from public.task_series where id = v_series) then
+    raise exception 'FAIL  a pilot retired the reconcile series';
+  end if;
+
+  -- An UPDATE a policy hides simply touches nothing, but an INSERT a policy
+  -- refuses raises -- so this one is caught rather than counted.
+  begin
+    insert into public.task_series (company_id, title, recurrence, interval_days)
+    values ('00000000-0000-0000-0000-00000000c000', 'Invented',
+            'interval_days', 1);
+  exception when others then
+    v_refused := true;
+  end;
+
+  if not v_refused then
+    raise exception 'FAIL  a pilot invented a chore series';
+  end if;
+  select count(*) into v_rows from public.task_series where title = 'Invented';
+  if v_rows <> 0 then
+    raise exception 'FAIL  a pilot''s invented chore series is there anyway';
+  end if;
+
+  perform set_config('role', 'postgres', true);
+  raise notice 'PASS  only an admin can change whose turn comes round';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 47. A recurring chore produces its successor when it is ticked, and exactly
+--     one however often it is ticked. Un-ticking a task and ticking it again
+--     is the obvious way to end up holding two copies of the same chore, and
+--     the only thing preventing it is the not-exists guard in the spawn.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_series uuid;
+  v_task   uuid;
+  v_rows   int;
+  v_due    date;
+begin
+  insert into public.task_series (company_id, title, recurrence, interval_days)
+  values ('00000000-0000-0000-0000-00000000c000', 'Wash the floats',
+          'interval_days', 90)
+  returning id into v_series;
+
+  insert into public.task (company_id, series_id, title, assignee_member_id,
+                           due_date)
+  values ('00000000-0000-0000-0000-00000000c000', v_series, 'Wash the floats',
+          public.task_next_assignee(v_series),
+          public.aircraft_today() - 14)
+  returning id into v_task;
+
+  update public.task set status = 'done' where id = v_task;
+
+  select count(*) into v_rows from public.task
+   where series_id = v_series and status = 'open';
+  if v_rows <> 1 then
+    raise exception 'FAIL  ticking a recurring chore left % open successors', v_rows;
+  end if;
+
+  -- Ninety days from when it was actually done, not from when it was meant to
+  -- be: a chore a fortnight late does not come round a fortnight early.
+  select due_date into v_due from public.task
+   where series_id = v_series and status = 'open';
+  if v_due <> public.aircraft_today() + 90 then
+    raise exception 'FAIL  the successor is due %, not 90 days from today', v_due;
+  end if;
+
+  update public.task set status = 'open' where id = v_task;
+  update public.task set status = 'done' where id = v_task;
+
+  select count(*) into v_rows from public.task
+   where series_id = v_series and status = 'open';
+  if v_rows <> 1 then
+    raise exception 'FAIL  un-ticking and re-ticking left % copies of the chore',
+      v_rows;
+  end if;
+
+  -- A retired series stops producing. Otherwise the only way to end a chore
+  -- would be to leave one of them open forever.
+  update public.task_series set is_active = false where id = v_series;
+  update public.task set status = 'done'
+   where series_id = v_series and status = 'open';
+
+  select count(*) into v_rows from public.task
+   where series_id = v_series and status = 'open';
+  if v_rows <> 0 then
+    raise exception 'FAIL  a retired series produced another chore';
+  end if;
+
+  raise notice 'PASS  a recurring chore produces exactly one successor when ticked';
+end $$;
+rollback;
+
 \echo ''
 \echo 'All core schema checks passed.'
