@@ -6,6 +6,7 @@
 -- replaced with real figures before the first real invoice is issued. These map
 -- to the outstanding items in SPEC.md section 8 question 6.
 --
+--   - the real chart of accounts codes (every code below is invented)
 --   - current tach reading
 --   - date of last prop blade clip inspection
 --   - tach at last prop hub grease
@@ -78,3 +79,84 @@ values (
 insert into public.ownership_share (period_id, member_id, pct) values
   ('00000000-0000-0000-0000-0000000b0001', '00000000-0000-0000-0000-00000000a001', 50.0000),
   ('00000000-0000-0000-0000-0000000b0001', '00000000-0000-0000-0000-00000000a002', 50.0000);
+
+-- ---------------------------------------------------------------------------
+-- Chart of accounts
+--
+-- TODO(seed) Every code here is invented. They must be replaced with the real
+-- codes from whatever QBO/Xero file the accountant sets up, or the journal
+-- export will not import. Only the shape is meant to be right.
+--
+-- Note the reserve account is REVENUE, not an expense. CRA generally
+-- disallows deducting a contingent reserve, so accruing $40/hr toward an
+-- overhaul is very likely income with the cash restricted, not a deduction.
+-- The app's reserve is a management construct. An accountant must confirm
+-- this before the first T2.
+-- ---------------------------------------------------------------------------
+
+insert into public.gl_account (company_id, code, name, type) values
+  ('00000000-0000-0000-0000-00000000c000', '1100', 'Accounts receivable - owners', 'asset'),
+  ('00000000-0000-0000-0000-00000000c000', '1000', 'Operating bank account',       'asset'),
+  ('00000000-0000-0000-0000-00000000c000', '1050', 'Reserve bank account',         'asset'),
+  ('00000000-0000-0000-0000-00000000c000', '4100', 'Flight revenue - fuel',        'revenue'),
+  ('00000000-0000-0000-0000-00000000c000', '4200', 'Flight revenue - operating',   'revenue'),
+  ('00000000-0000-0000-0000-00000000c000', '4300', 'Reserve contributions',        'revenue'),
+  ('00000000-0000-0000-0000-00000000c000', '4400', 'Hangarage recovery',           'revenue'),
+  ('00000000-0000-0000-0000-00000000c000', '4500', 'Insurance recovery',           'revenue'),
+  ('00000000-0000-0000-0000-00000000c000', '5100', 'Fuel',                         'expense'),
+  ('00000000-0000-0000-0000-00000000c000', '5200', 'Maintenance',                  'expense'),
+  ('00000000-0000-0000-0000-00000000c000', '5300', 'Consumables',                  'expense'),
+  ('00000000-0000-0000-0000-00000000c000', '5900', 'Other operating',              'expense');
+
+update public.company
+   set ar_account_code   = '1100',
+       bank_account_code = '1000'
+ where id = '00000000-0000-0000-0000-00000000c000';
+
+-- ---------------------------------------------------------------------------
+-- Opening rate schedule
+--
+-- TODO(seed) SPEC.md section 8 question 6: the real wet rate and how it splits
+-- between fuel, reserve and operating. These numbers are invented and sum to
+-- $285/hr only so the draft-invoice maths has something to chew on.
+--
+-- Raising the rate means inserting a NEW rate_schedule with a later
+-- effective_from, never editing these rows.
+-- ---------------------------------------------------------------------------
+
+insert into public.rate_schedule (id, aircraft_id, effective_from, note)
+values (
+  '00000000-0000-0000-0000-0000000d0001',
+  '00000000-0000-0000-0000-0000000ac001',
+  date '2026-01-01',
+  'Opening rate, invented placeholder figures'
+);
+
+insert into public.rate_component
+  (schedule_id, name, kind, rate_per_hour, gl_account_code, tax_treatment, sort_order) values
+  ('00000000-0000-0000-0000-0000000d0001', 'Fuel',              'fuel',      150.0000, '4100', 'taxable', 1),
+  ('00000000-0000-0000-0000-0000000d0001', 'Engine overhaul',   'reserve',    40.0000, '4300', 'taxable', 2),
+  ('00000000-0000-0000-0000-0000000d0001', 'Propeller',         'reserve',    10.0000, '4300', 'taxable', 3),
+  ('00000000-0000-0000-0000-0000000d0001', 'Floats and rigging','reserve',    15.0000, '4300', 'taxable', 4),
+  ('00000000-0000-0000-0000-0000000d0001', 'Contingency',       'reserve',    15.0000, '4300', 'taxable', 5),
+  ('00000000-0000-0000-0000-0000000d0001', 'Other operating',   'operating',  55.0000, '4200', 'taxable', 6);
+
+-- ---------------------------------------------------------------------------
+-- Opening fixed costs
+--
+-- TODO(seed) real monthly hangarage and insurance. Split by ownership percent
+-- per the aircraft's fixed_cost_split setting.
+-- ---------------------------------------------------------------------------
+
+insert into public.fixed_cost_schedule (id, aircraft_id, effective_from, note)
+values (
+  '00000000-0000-0000-0000-0000000e0001',
+  '00000000-0000-0000-0000-0000000ac001',
+  date '2026-01-01',
+  'Opening fixed costs, invented placeholder figures'
+);
+
+insert into public.fixed_cost
+  (schedule_id, name, kind, monthly_amount, gl_account_code, tax_treatment, sort_order) values
+  ('00000000-0000-0000-0000-0000000e0001', 'Hangarage', 'hangarage', 600.00, '4400', 'taxable',      1),
+  ('00000000-0000-0000-0000-0000000e0001', 'Insurance', 'insurance', 450.00, '4500', 'out_of_scope', 2);

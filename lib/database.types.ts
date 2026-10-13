@@ -27,17 +27,161 @@ isOneToOne: false
                   ]
                 },"company": {
                   Row: {
-                    "created_at": string,"etransfer_recipient": string | null,"fiscal_year_end_month": number,"gst_number": string | null,"gst_registered": boolean,"id": string,"legal_name": string,"updated_at": string
+                    "ar_account_code": string | null,"bank_account_code": string | null,"created_at": string,"etransfer_recipient": string | null,"fiscal_year_end_month": number,"gst_number": string | null,"gst_registered": boolean,"id": string,"legal_name": string,"updated_at": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "created_at"?: string,"etransfer_recipient"?: string | null,"fiscal_year_end_month"?: number,"gst_number"?: string | null,"gst_registered"?: boolean,"id"?: string,"legal_name": string,"updated_at"?: string
+                    "ar_account_code"?: string | null,"bank_account_code"?: string | null,"created_at"?: string,"etransfer_recipient"?: string | null,"fiscal_year_end_month"?: number,"gst_number"?: string | null,"gst_registered"?: boolean,"id"?: string,"legal_name": string,"updated_at"?: string
                   }
                   Update: {
-                    "created_at"?: string,"etransfer_recipient"?: string | null,"fiscal_year_end_month"?: number,"gst_number"?: string | null,"gst_registered"?: boolean,"id"?: string,"legal_name"?: string,"updated_at"?: string
+                    "ar_account_code"?: string | null,"bank_account_code"?: string | null,"created_at"?: string,"etransfer_recipient"?: string | null,"fiscal_year_end_month"?: number,"gst_number"?: string | null,"gst_registered"?: boolean,"id"?: string,"legal_name"?: string,"updated_at"?: string
                   }
                   Relationships: [
                     
+                  ]
+                },"fixed_cost": {
+                  Row: {
+                    "gl_account_code": string,"id": string,"kind": Database["public"]['Enums']["ledger_entry_kind"],"monthly_amount": number,"name": string,"schedule_id": string,"sort_order": number,"tax_treatment": Database["public"]['Enums']["tax_treatment"]
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "gl_account_code": string,"id"?: string,"kind": Database["public"]['Enums']["ledger_entry_kind"],"monthly_amount": number,"name": string,"schedule_id": string,"sort_order"?: number,"tax_treatment"?: Database["public"]['Enums']["tax_treatment"]
+                  }
+                  Update: {
+                    "gl_account_code"?: string,"id"?: string,"kind"?: Database["public"]['Enums']["ledger_entry_kind"],"monthly_amount"?: number,"name"?: string,"schedule_id"?: string,"sort_order"?: number,"tax_treatment"?: Database["public"]['Enums']["tax_treatment"]
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "fixed_cost_schedule_id_fkey"
+      columns: ["schedule_id"]
+isOneToOne: false
+      referencedRelation: "fixed_cost_schedule"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"fixed_cost_schedule": {
+                  Row: {
+                    "aircraft_id": string,"created_at": string,"effective_from": string,"id": string,"note": string | null
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "aircraft_id": string,"created_at"?: string,"effective_from": string,"id"?: string,"note"?: string | null
+                  }
+                  Update: {
+                    "aircraft_id"?: string,"created_at"?: string,"effective_from"?: string,"id"?: string,"note"?: string | null
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "fixed_cost_schedule_aircraft_id_fkey"
+      columns: ["aircraft_id"]
+isOneToOne: false
+      referencedRelation: "aircraft"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"gl_account": {
+                  Row: {
+                    "code": string,"company_id": string,"created_at": string,"name": string,"type": Database["public"]['Enums']["gl_account_type"]
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "code": string,"company_id": string,"created_at"?: string,"name": string,"type": Database["public"]['Enums']["gl_account_type"]
+                  }
+                  Update: {
+                    "code"?: string,"company_id"?: string,"created_at"?: string,"name"?: string,"type"?: Database["public"]['Enums']["gl_account_type"]
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "gl_account_company_id_fkey"
+      columns: ["company_id"]
+isOneToOne: false
+      referencedRelation: "company"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"invoice": {
+                  Row: {
+                    "company_id": string,"created_at": string,"external_ref": string | null,"id": string,"issued_at": string | null,"member_id": string,"note": string | null,"number": number | null,"period_month": string,"settled_at": string | null,"status": Database["public"]['Enums']["invoice_status"],"synced_at": string | null,"updated_at": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "company_id": string,"created_at"?: string,"external_ref"?: string | null,"id"?: string,"issued_at"?: string | null,"member_id": string,"note"?: string | null,"number"?: number | null,"period_month": string,"settled_at"?: string | null,"status"?: Database["public"]['Enums']["invoice_status"],"synced_at"?: string | null,"updated_at"?: string
+                  }
+                  Update: {
+                    "company_id"?: string,"created_at"?: string,"external_ref"?: string | null,"id"?: string,"issued_at"?: string | null,"member_id"?: string,"note"?: string | null,"number"?: number | null,"period_month"?: string,"settled_at"?: string | null,"status"?: Database["public"]['Enums']["invoice_status"],"synced_at"?: string | null,"updated_at"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "invoice_company_id_fkey"
+      columns: ["company_id"]
+isOneToOne: false
+      referencedRelation: "company"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "invoice_member_id_fkey"
+      columns: ["member_id"]
+isOneToOne: false
+      referencedRelation: "member"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"invoice_counter": {
+                  Row: {
+                    "company_id": string,"next_number": number
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "company_id": string,"next_number"?: number
+                  }
+                  Update: {
+                    "company_id"?: string,"next_number"?: number
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "invoice_counter_company_id_fkey"
+      columns: ["company_id"]
+isOneToOne: true
+      referencedRelation: "company"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"ledger_entry": {
+                  Row: {
+                    "amount": number,"company_id": string,"created_at": string,"description": string,"entry_date": string,"external_ref": string | null,"gl_account_code": string,"gst_amount": number,"id": string,"invoice_id": string | null,"kind": Database["public"]['Enums']["ledger_entry_kind"],"member_id": string,"quantity": number | null,"synced_at": string | null,"tax_treatment": Database["public"]['Enums']["tax_treatment"],"unit_rate": number | null
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "amount": number,"company_id": string,"created_at"?: string,"description": string,"entry_date": string,"external_ref"?: string | null,"gl_account_code": string,"gst_amount"?: number,"id"?: string,"invoice_id"?: string | null,"kind": Database["public"]['Enums']["ledger_entry_kind"],"member_id": string,"quantity"?: number | null,"synced_at"?: string | null,"tax_treatment"?: Database["public"]['Enums']["tax_treatment"],"unit_rate"?: number | null
+                  }
+                  Update: {
+                    "amount"?: number,"company_id"?: string,"created_at"?: string,"description"?: string,"entry_date"?: string,"external_ref"?: string | null,"gl_account_code"?: string,"gst_amount"?: number,"id"?: string,"invoice_id"?: string | null,"kind"?: Database["public"]['Enums']["ledger_entry_kind"],"member_id"?: string,"quantity"?: number | null,"synced_at"?: string | null,"tax_treatment"?: Database["public"]['Enums']["tax_treatment"],"unit_rate"?: number | null
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "ledger_entry_company_id_fkey"
+      columns: ["company_id"]
+isOneToOne: false
+      referencedRelation: "company"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "ledger_entry_company_id_gl_account_code_fkey"
+      columns: ["company_id","gl_account_code"]
+isOneToOne: false
+      referencedRelation: "gl_account"
+      referencedColumns: ["company_id","code"]
+    },{
+      foreignKeyName: "ledger_entry_invoice_id_fkey"
+      columns: ["invoice_id"]
+isOneToOne: false
+      referencedRelation: "invoice"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "ledger_entry_member_id_fkey"
+      columns: ["member_id"]
+isOneToOne: false
+      referencedRelation: "member"
+      referencedColumns: ["id"]
+    }
                   ]
                 },"member": {
                   Row: {
@@ -99,10 +243,90 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"rate_component": {
+                  Row: {
+                    "gl_account_code": string,"id": string,"kind": Database["public"]['Enums']["rate_component_kind"],"name": string,"rate_per_hour": number,"schedule_id": string,"sort_order": number,"tax_treatment": Database["public"]['Enums']["tax_treatment"]
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "gl_account_code": string,"id"?: string,"kind": Database["public"]['Enums']["rate_component_kind"],"name": string,"rate_per_hour": number,"schedule_id": string,"sort_order"?: number,"tax_treatment"?: Database["public"]['Enums']["tax_treatment"]
+                  }
+                  Update: {
+                    "gl_account_code"?: string,"id"?: string,"kind"?: Database["public"]['Enums']["rate_component_kind"],"name"?: string,"rate_per_hour"?: number,"schedule_id"?: string,"sort_order"?: number,"tax_treatment"?: Database["public"]['Enums']["tax_treatment"]
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "rate_component_schedule_id_fkey"
+      columns: ["schedule_id"]
+isOneToOne: false
+      referencedRelation: "rate_schedule"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"rate_schedule": {
+                  Row: {
+                    "aircraft_id": string,"created_at": string,"effective_from": string,"id": string,"note": string | null
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "aircraft_id": string,"created_at"?: string,"effective_from": string,"id"?: string,"note"?: string | null
+                  }
+                  Update: {
+                    "aircraft_id"?: string,"created_at"?: string,"effective_from"?: string,"id"?: string,"note"?: string | null
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "rate_schedule_aircraft_id_fkey"
+      columns: ["aircraft_id"]
+isOneToOne: false
+      referencedRelation: "aircraft"
+      referencedColumns: ["id"]
+    }
+                  ]
                 }
           }
           Views: {
-            [_ in never]: never
+            "gl_journal": {
+                  Row: {
+                    "company_id": string | null,"debit_credit": number | null,"description": string | null,"entry_date": string | null,"gl_account_code": string | null,"invoice_number": number | null,"kind": Database["public"]['Enums']["ledger_entry_kind"] | null,"ledger_entry_id": string | null,"line_no": number | null,"member_id": string | null,"tax_treatment": Database["public"]['Enums']["tax_treatment"] | null
+                  }
+                  ComputedFields: never
+                  Relationships: [
+                    
+                  ]
+                },"ledger_entry_posted": {
+                  Row: {
+                    "amount": number | null,"company_id": string | null,"created_at": string | null,"description": string | null,"entry_date": string | null,"external_ref": string | null,"gl_account_code": string | null,"gst_amount": number | null,"id": string | null,"invoice_id": string | null,"kind": Database["public"]['Enums']["ledger_entry_kind"] | null,"member_id": string | null,"quantity": number | null,"synced_at": string | null,"tax_treatment": Database["public"]['Enums']["tax_treatment"] | null,"unit_rate": number | null
+                  }
+                  ComputedFields: never
+                  Relationships: [
+                    {
+      foreignKeyName: "ledger_entry_company_id_fkey"
+      columns: ["company_id"]
+isOneToOne: false
+      referencedRelation: "company"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "ledger_entry_company_id_gl_account_code_fkey"
+      columns: ["company_id","gl_account_code"]
+isOneToOne: false
+      referencedRelation: "gl_account"
+      referencedColumns: ["company_id","code"]
+    },{
+      foreignKeyName: "ledger_entry_invoice_id_fkey"
+      columns: ["invoice_id"]
+isOneToOne: false
+      referencedRelation: "invoice"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "ledger_entry_member_id_fkey"
+      columns: ["member_id"]
+isOneToOne: false
+      referencedRelation: "member"
+      referencedColumns: ["id"]
+    }
+                  ]
+                }
           }
           Functions: {
             "claim_member_identity":
@@ -114,17 +338,42 @@ isOneToOne: false
 "current_member_id":
 { Args: Record<PropertyKey, never>; Returns: string
                            },
+"fixed_costs_as_of":
+{ Args: { "p_aircraft_id": string,"p_on": string }; Returns: {
+              "gl_account_code": string,"kind": Database["public"]['Enums']["ledger_entry_kind"],"monthly_amount": number,"name": string,"tax_treatment": Database["public"]['Enums']["tax_treatment"]
+            }[]
+                           },
+"invoice_total":
+{ Args: { "p_invoice_id": string }; Returns: number
+                           },
 "is_admin":
 { Args: Record<PropertyKey, never>; Returns: boolean
+                           },
+"member_balance":
+{ Args: { "p_member_id": string }; Returns: number
+                           },
+"next_invoice_number":
+{ Args: { "p_company_id": string }; Returns: number
                            },
 "ownership_as_of":
 { Args: { "p_aircraft_id": string,"p_on": string }; Returns: {
               "member_id": string,"pct": number
             }[]
+                           },
+"rate_components_as_of":
+{ Args: { "p_aircraft_id": string,"p_on": string }; Returns: {
+              "gl_account_code": string,"kind": Database["public"]['Enums']["rate_component_kind"],"name": string,"rate_per_hour": number,"tax_treatment": Database["public"]['Enums']["tax_treatment"]
+            }[]
+                           },
+"rate_schedule_as_of":
+{ Args: { "p_aircraft_id": string,"p_on": string }; Returns: string
+                           },
+"wet_rate_as_of":
+{ Args: { "p_aircraft_id": string,"p_on": string }; Returns: number
                            }
           }
           Enums: {
-            "billing_basis": "flight_time"|"tach","expense_approval_rule": "any_other_owner"|"admin_only","fixed_cost_split": "ownership_pct"|"equal"|"hours_flown","hour_rounding": "round_up_tenth"|"nearest_tenth"|"exact","member_role": "pilot"|"admin"
+            "billing_basis": "flight_time"|"tach","expense_approval_rule": "any_other_owner"|"admin_only","fixed_cost_split": "ownership_pct"|"equal"|"hours_flown","gl_account_type": "asset"|"liability"|"equity"|"revenue"|"expense","hour_rounding": "round_up_tenth"|"nearest_tenth"|"exact","invoice_status": "draft"|"issued"|"settled"|"void","ledger_entry_kind": "flight_charge"|"hangarage"|"insurance"|"expense_credit"|"payment"|"payout"|"adjustment","member_role": "pilot"|"admin","rate_component_kind": "fuel"|"reserve"|"operating","tax_treatment": "taxable"|"zero_rated"|"exempt"|"out_of_scope"
           }
           CompositeTypes: {
             [_ in never]: never
@@ -240,7 +489,7 @@ export type CompositeTypes<
 export const Constants = {
   "public": {
           Enums: {
-            "billing_basis": ["flight_time", "tach"],"expense_approval_rule": ["any_other_owner", "admin_only"],"fixed_cost_split": ["ownership_pct", "equal", "hours_flown"],"hour_rounding": ["round_up_tenth", "nearest_tenth", "exact"],"member_role": ["pilot", "admin"]
+            "billing_basis": ["flight_time", "tach"],"expense_approval_rule": ["any_other_owner", "admin_only"],"fixed_cost_split": ["ownership_pct", "equal", "hours_flown"],"gl_account_type": ["asset", "liability", "equity", "revenue", "expense"],"hour_rounding": ["round_up_tenth", "nearest_tenth", "exact"],"invoice_status": ["draft", "issued", "settled", "void"],"ledger_entry_kind": ["flight_charge", "hangarage", "insurance", "expense_credit", "payment", "payout", "adjustment"],"member_role": ["pilot", "admin"],"rate_component_kind": ["fuel", "reserve", "operating"],"tax_treatment": ["taxable", "zero_rated", "exempt", "out_of_scope"]
           }
         }
 } as const
