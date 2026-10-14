@@ -1,6 +1,5 @@
 import Link from "next/link";
 
-import { retireTaskSeries } from "@/app/tasks/actions";
 import { BackHeader } from "@/components/back-header";
 import { TaskRow } from "@/components/task-row";
 import { requireMember } from "@/lib/dal";
@@ -97,45 +96,53 @@ export default async function Tasks() {
             here, so the month-end reconcile belongs in this list.
           </p>
         ) : (
-          series.map((chore) => (
-            <div
-              key={chore.id}
-              className="flex-none rounded-[14px] border border-line bg-surface px-3.5 py-3"
-            >
-              <div className="text-base font-semibold">{chore.title}</div>
-              <div className="mt-1 text-[13px] text-muted">
-                {describeRecurrence(chore)}
+          series.map((chore) => {
+            const body = (
+              <>
+                <div className="text-base font-semibold">{chore.title}</div>
+                <div className="mt-1 text-[13px] text-muted">
+                  {describeRecurrence(chore)}
+                </div>
+                <div className="mt-1 text-[13px]">
+                  {chore.next_name === null ? (
+                    <span className="text-muted">
+                      Nobody is in the rotation
+                      {chore.admins_only && " — it is limited to admins"}
+                    </span>
+                  ) : (
+                    <>
+                      Next turn:{" "}
+                      <span className="font-semibold">{chore.next_name}</span>
+                      {chore.rotation_names.length > 1 && (
+                        <span className="text-muted">
+                          {" "}
+                          · rotation {chore.rotation_names.join(" → ")}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </div>
+              </>
+            );
+
+            const card =
+              "flex-none rounded-[14px] border border-line bg-surface px-3.5 py-3";
+
+            // Stopping a chore used to be a button in this card, and it is now
+            // on the chore's own screen instead -- so the whole card is one tap
+            // target, the way a task row is, and nothing destructive sits under
+            // a thumb scrolling the list. Only an admin gets the link, because
+            // only an admin can change a chore.
+            return member.role === "admin" ? (
+              <Link key={chore.id} href={`/tasks/series/${chore.id}`} className={card}>
+                {body}
+              </Link>
+            ) : (
+              <div key={chore.id} className={card}>
+                {body}
               </div>
-              <div className="mt-1 text-[13px]">
-                {chore.next_name === null ? (
-                  <span className="text-muted">
-                    Nobody is in the rotation
-                    {chore.admins_only && " — it is limited to admins"}
-                  </span>
-                ) : (
-                  <>
-                    Next turn: <span className="font-semibold">{chore.next_name}</span>
-                    {chore.rotation_names.length > 1 && (
-                      <span className="text-muted">
-                        {" "}
-                        · rotation {chore.rotation_names.join(" → ")}
-                      </span>
-                    )}
-                  </>
-                )}
-              </div>
-              {member.role === "admin" && (
-                <form action={retireTaskSeries.bind(null, chore.id)} className="mt-1.5">
-                  <button
-                    type="submit"
-                    className="flex min-h-11 items-center text-[15px] font-medium text-muted underline"
-                  >
-                    Stop this coming back
-                  </button>
-                </form>
-              )}
-            </div>
-          ))
+            );
+          })
         )}
 
         {settled.length > 0 && (

@@ -155,26 +155,25 @@ export async function createTask(
   redirect("/tasks");
 }
 
-/**
- * A recurring chore.
- *
- * Admin-only, and this exists rather than being seed-only because the seed
- * never runs against a hosted database: without this form a production company
- * would have no reconcile series, and closing a month would spawn nothing --
- * which is the whole reason the feature was asked for.
- *
- * requireAdmin() rather than leaning on `task_series_admin_write` alone: the
- * policy refuses either way, but it would refuse an UPDATE by silently
- * matching no rows, which reads on screen as "saved" and nothing changing.
- */
-export async function createTaskSeries(
-  _prev: Failed | null,
-  form: FormData,
-): Promise<Failed | never> {
-  await requireAdmin();
-  const aircraft = await getAircraft();
-  if (!aircraft) return { error: "No aircraft has been set up yet." };
+/** What a chore is, less which company it belongs to. */
+type SeriesFields = {
+  title: string;
+  detail: string | null;
+  recurrence: "month_close" | "interval_days";
+  interval_days: number | null;
+  due_offset_days: number;
+  admins_only: boolean;
+};
 
+/**
+ * Reads a chore off either of its two forms.
+ *
+ * Shared so that adding one and editing one cannot come to disagree about what
+ * a valid chore is -- the failure that mattered would be the quiet direction,
+ * where the editor accepts something the creator would have refused and the
+ * check constraint is the only thing left objecting.
+ */
+function readSeriesFields(form: FormData): Failed | SeriesFields {
   const title = String(form.get("title") ?? "").trim();
   if (title === "") return { error: "Give the chore a title." };
 
@@ -202,18 +201,85 @@ export async function createTaskSeries(
     }
   }
 
-  const supabase = await createClient();
-  const { error } = await supabase.from("task_series").insert({
-    company_id: aircraft.company_id,
+  return {
     title,
     detail: String(form.get("detail") ?? "").trim() || null,
     recurrence,
     interval_days: intervalDays,
     due_offset_days: dueOffsetDays,
     admins_only: form.get("admins_only") === "on",
-  });
+  };
+}
+
+/**
+ * A recurring chore.
+ *
+ * Admin-only, and this exists rather than being seed-only because the seed
+ * never runs against a hosted database: without this form a production company
+ * would have no reconcile series, and closing a month would spawn nothing --
+ * which is the whole reason the feature was asked for.
+ *
+ * requireAdmin() rather than leaning on `task_series_admin_write` alone: the
+ * policy refuses either way, but it would refuse an UPDATE by silently
+ * matching no rows, which reads on screen as "saved" and nothing changing.
+ */
+export async function createTaskSeries(
+  _prev: Failed | null,
+  form: FormData,
+): Promise<Failed | never> {
+  await requireAdmin();
+  const aircraft = await getAircraft();
+  if (!aircraft) return { error: "No aircraft has been set up yet." };
+
+  const fields = readSeriesFields(form);
+  if ("error" in fields) return fields;
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("task_series")
+    .insert({ company_id: aircraft.company_id, ...fields });
 
   if (error) return { error: error.message };
+
+  revalidateTasks();
+  redirect("/tasks");
+}
+
+/**
+ * Corrects a chore: its wording, how often it comes round, who is in for it.
+ *
+ * The tasks already spawned from it are left exactly as they are. A task's
+ * title is a copy taken when it spawned, and that is deliberate -- the chore
+ * somebody already ticked off should keep the words it had when they did it,
+ * because the "Lately" list is the evidence the rotation is judged by. So a
+ * rename reaches the next turn, not the last one.
+ *
+ * Whose turn is next is not editable here because it is not stored: it is
+ * derived from the roster and from who completed the previous turn. Narrowing
+ * a chore to admins changes the rotation; nothing else on this screen does.
+ */
+export async function updateTaskSeries(
+  seriesId: string,
+  _prev: Failed | null,
+  form: FormData,
+): Promise<Failed | never> {
+  await requireAdmin();
+
+  const fields = readSeriesFields(form);
+  if ("error" in fields) return fields;
+
+  const supabase = await createClient();
+  // Selecting the id back is the only way to tell a refused UPDATE from an
+  // applied one: RLS declines by matching no rows, not by raising, and a
+  // no-op that redirected would read on screen as a save.
+  const { data, error } = await supabase
+    .from("task_series")
+    .update(fields)
+    .eq("id", seriesId)
+    .select("id");
+
+  if (error) return { error: error.message };
+  if (!data || data.length === 0) return { error: "That chore could not be saved." };
 
   revalidateTasks();
   redirect("/tasks");

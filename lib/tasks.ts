@@ -143,6 +143,23 @@ export async function getTaskSeries(): Promise<SeriesWithRotation[]> {
 }
 
 /**
+ * One chore, for the screen that corrects it.
+ *
+ * Not filtered on `is_active`, unlike the list: a chore that was stopped is
+ * still a row somebody may be looking at, and 404ing it would be a confusing
+ * way to say "this one no longer comes back".
+ */
+export async function getTaskSeriesById(seriesId: string): Promise<TaskSeries | null> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("task_series")
+    .select("*")
+    .eq("id", seriesId)
+    .maybeSingle();
+  return data ?? null;
+}
+
+/**
  * How a due date reads, and whether it should look like a warning.
  *
  * Today counts as due, not overdue -- a chore due today is a chore for today.
