@@ -303,6 +303,61 @@ export async function markMaintenanceDone(_prev: Failed | null, form: FormData):
   redirect("/aircraft");
 }
 
+/** The five columns the basis decides between, all of them written every time. */
+type Intervals = {
+  interval_hours: number | null;
+  lead_hours: number | null;
+  interval_months: number | null;
+  due_date: string | null;
+  lead_days: number | null;
+};
+
+/**
+ * Reads the interval group off an item form, for whichever clock the item runs
+ * on.
+ *
+ * All five columns are written, including the five-minus-two that mean nothing
+ * on this basis. A tach item carrying a leftover `lead_days` is not wrong
+ * today, because nothing reads it -- but it is a figure somebody could later
+ * see and believe.
+ */
+function readIntervals(basis: string, form: FormData): Intervals | Failed {
+  if (basis === "tach") {
+    const hours = readNumber(form.get("interval_hours"));
+    if (hours === null || hours <= 0) {
+      return { error: "Say how many tach hours there are between jobs." };
+    }
+    return {
+      interval_hours: hours,
+      lead_hours: readNumber(form.get("lead_hours")),
+      interval_months: null,
+      due_date: null,
+      lead_days: null,
+    };
+  }
+
+  const months = readNumber(form.get("interval_months"));
+  const dueOn = String(form.get("due_date") ?? "");
+  const fixed = /^\d{4}-\d{2}-\d{2}$/.test(dueOn) ? dueOn : null;
+  if ((months === null || months <= 0) && fixed === null) {
+    return {
+      error: "A calendar item needs either a number of months or a fixed date.",
+    };
+  }
+
+  const lead = readNumber(form.get("lead_days"));
+  return {
+    interval_hours: null,
+    lead_hours: null,
+    // Never both: the status view prefers the fixed date, so leaving an
+    // interval behind it would have the screen saying one thing and the
+    // countdown measuring another.
+    interval_months: fixed === null ? Math.round(months as number) : null,
+    due_date: fixed,
+    lead_days: lead === null ? null : Math.round(lead),
+  };
+}
+
 /**
  * Corrects what an item is: its name, its interval, how much warning it gives
  * and what the job is expected to cost.
@@ -339,47 +394,16 @@ export async function updateMaintenanceItem(
     .maybeSingle();
   if (!item) return { error: "That maintenance item no longer exists." };
 
-  const patch: {
-    name: string;
-    est_cost: number | null;
-    interval_hours?: number;
-    lead_hours?: number | null;
-    interval_months?: number | null;
-    due_date?: string | null;
-    lead_days?: number | null;
-  } = {
-    name,
-    est_cost: readNumber(form.get("est_cost")),
-  };
-
-  if (item.basis === "tach") {
-    const hours = readNumber(form.get("interval_hours"));
-    if (hours === null || hours <= 0) {
-      return { error: "Say how many tach hours there are between jobs." };
-    }
-    patch.interval_hours = hours;
-    patch.lead_hours = readNumber(form.get("lead_hours"));
-  } else {
-    const months = readNumber(form.get("interval_months"));
-    const dueOn = String(form.get("due_date") ?? "");
-    const fixed = /^\d{4}-\d{2}-\d{2}$/.test(dueOn) ? dueOn : null;
-    if ((months === null || months <= 0) && fixed === null) {
-      return {
-        error: "A calendar item needs either a number of months or a fixed date.",
-      };
-    }
-    // Never both: the status view prefers the fixed date, so leaving an
-    // interval behind it would have the screen saying one thing and the
-    // countdown measuring another.
-    patch.interval_months = fixed === null ? Math.round(months as number) : null;
-    patch.due_date = fixed;
-    const lead = readNumber(form.get("lead_days"));
-    patch.lead_days = lead === null ? null : Math.round(lead);
-  }
+  const intervals = readIntervals(item.basis, form);
+  if ("error" in intervals) return intervals;
 
   const { data, error } = await supabase
     .from("maintenance_item")
-    .update(patch)
+    .update({
+      name,
+      est_cost: readNumber(form.get("est_cost")),
+      ...intervals,
+    })
     .eq("id", itemId)
     .select("id");
 
@@ -393,4 +417,79 @@ export async function updateMaintenanceItem(
 
   revalidatePath("/aircraft", "layout");
   redirect(`/aircraft/maintenance/${itemId}`);
+}
+
+/**
+ * Adds an item to the board.
+ *
+ * The four that came with the aeroplane were seeded, which quietly said the
+ * list was fixed. It is not: a service bulletin arrives, a float gets an annual
+ * inspection, somebody decides the oil change deserves its own row.
+ *
+ * The basis comes from the URL rather than the form because it is the question
+ * the screen asks first and then stops asking -- it decides which fields the
+ * form even has, and it is the one thing Edit will never let anybody change.
+ *
+ * New items go to the bottom. The board is read top to bottom and the order of
+ * the seeded four means something to whoever set them up; dropping a new row
+ * into the middle of that is a change nobody asked for.
+ */
+export async function createMaintenanceItem(
+  basis: "tach" | "calendar",
+  _prev: Failed | null,
+  form: FormData,
+): Promise<Failed | never> {
+  await requireMember();
+
+  const name = String(form.get("name") ?? "").trim();
+  if (!name) return { error: "The item needs a name." };
+
+  const kind = String(form.get("kind") ?? "");
+  if (
+    kind !== "life_limit" &&
+    kind !== "recurring_inspection" &&
+    kind !== "recurring_task"
+  ) {
+    return { error: "Say what sort of item this is." };
+  }
+
+  const aircraft = await getAircraft();
+  if (!aircraft) return { error: "No aircraft has been set up yet." };
+
+  const intervals = readIntervals(basis, form);
+  if ("error" in intervals) return intervals;
+
+  const supabase = await createClient();
+  const { data: last } = await supabase
+    .from("maintenance_item")
+    .select("sort_order")
+    .eq("aircraft_id", aircraft.id)
+    .order("sort_order", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const { data, error } = await supabase
+    .from("maintenance_item")
+    .insert({
+      aircraft_id: aircraft.id,
+      name,
+      kind,
+      basis,
+      est_cost: readNumber(form.get("est_cost")),
+      sort_order: (last?.sort_order ?? 0) + 1,
+      ...intervals,
+    })
+    .select("id")
+    .maybeSingle();
+
+  if (error) return { error: error.message };
+  if (!data) {
+    return {
+      error:
+        "Only an admin can add a maintenance item. Ask one of them to add it.",
+    };
+  }
+
+  revalidatePath("/aircraft", "layout");
+  redirect(`/aircraft/maintenance/${data.id}`);
 }

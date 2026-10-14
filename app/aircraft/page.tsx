@@ -31,7 +31,8 @@ export const dynamic = "force-dynamic";
  * when it falls due.
  */
 export default async function Aircraft() {
-  await requireMember();
+  const member = await requireMember();
+  const isAdmin = member.role === "admin";
 
   const aircraft = await getAircraft();
   if (!aircraft) {
@@ -106,15 +107,35 @@ export default async function Aircraft() {
           </Link>
         </div>
 
-        {maintenance.length === 0 ? (
+        {maintenance.length === 0 && !isAdmin ? (
           <p className="flex-none rounded-[14px] border border-line bg-surface px-3.5 py-3 text-[15px] text-muted">
             No maintenance items have been set up yet.
           </p>
         ) : (
           <div className="flex-none divide-y divide-hairline rounded-[14px] border border-line bg-surface px-3.5">
+            {maintenance.length === 0 && (
+              <p className="py-3 text-[15px] text-muted">
+                No maintenance items have been set up yet.
+              </p>
+            )}
+
             {maintenance.map((item) => (
               <MaintenanceRow key={item.id} item={item} />
             ))}
+
+            {/*
+              The last row of the card rather than a second link beside "Log
+              tach reading": adding an item is a rare admin act, and the header
+              belongs to the thing everybody does.
+            */}
+            {isAdmin && (
+              <Link
+                href="/aircraft/maintenance/new"
+                className="flex min-h-11 items-center py-3 text-[15px] font-semibold text-accent"
+              >
+                Add an item
+              </Link>
+            )}
           </div>
         )}
 
