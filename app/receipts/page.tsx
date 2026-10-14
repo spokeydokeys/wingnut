@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { TabBar } from "@/components/tab-bar";
+import { BackHeader } from "@/components/back-header";
 import { requireMember } from "@/lib/dal";
 import {
   canReview,
@@ -50,17 +50,21 @@ export default async function Receipts() {
 
   return (
     <>
-      <header className="flex flex-none items-center justify-between px-4 pt-4 pb-1">
-        <h1 className="text-[26px] font-semibold">Receipts</h1>
-        <Link
-          href="/receipts/new"
-          className="flex h-11 items-center rounded-[10px] border-[1.5px] border-ink bg-surface px-4 text-[15px] font-semibold"
-        >
-          + Receipt
-        </Link>
-      </header>
+      <BackHeader
+        href="/more"
+        label="More"
+        title="Receipts"
+        action={
+          <Link
+            href="/receipts/new"
+            className="flex h-11 items-center rounded-[10px] border-[1.5px] border-ink bg-surface px-4 text-[15px] font-semibold"
+          >
+            + Receipt
+          </Link>
+        }
+      />
 
-      <main className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 pt-2.5 pb-4">
+      <main className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 pt-3.5 pb-4">
         <h2 className="field-label px-0.5">Waiting on you</h2>
         {mine.length === 0 ? (
           <p className="flex-none rounded-[14px] border border-line bg-surface px-3.5 py-3 text-[15px] text-muted">
@@ -99,8 +103,6 @@ export default async function Receipts() {
           </div>
         )}
       </main>
-
-      <TabBar />
     </>
   );
 }

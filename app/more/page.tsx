@@ -29,6 +29,33 @@ export default async function More() {
           </div>
         </div>
 
+        {/* SPEC.md 4.7 starts the receipt flow here, so this is its home. The
+            Home screen's shortcut goes straight to the camera instead. */}
+        <Link
+          href="/receipts"
+          className="flex items-center justify-between rounded-[14px] border border-line bg-surface p-3.5"
+        >
+          <span>
+            <span className="block text-base font-semibold">Receipts</span>
+            <span className="block text-[13px] text-muted">
+              What is waiting to be agreed, and everything filed lately
+            </span>
+          </span>
+          <svg
+            aria-hidden="true"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M9 5l7 7-7 7" />
+          </svg>
+        </Link>
+
         <Link
           href="/tasks"
           className="flex items-center justify-between rounded-[14px] border border-line bg-surface p-3.5"

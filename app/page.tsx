@@ -93,6 +93,40 @@ export default async function Home() {
         </form>
 
         {/*
+          Second, by the owner's own ordering: timer, receipt, snags, tasks,
+          balance. It is here rather than behind More because a receipt is
+          photographed at the dock with the engine still ticking, and the one
+          thing that loses a $250 reimbursement is having to go looking for
+          this screen.
+        */}
+        <Link
+          href="/receipts/new"
+          className="flex flex-none items-center justify-between gap-3 rounded-[14px] border border-line bg-surface p-3.5"
+        >
+          <span>
+            <span className="field-label block">Receipts</span>
+            <span className="block text-base font-semibold">Add a receipt</span>
+            <span className="block text-[13px] text-muted">
+              Fuel you buy comes back in full on your next bill
+            </span>
+          </span>
+          <svg
+            aria-hidden="true"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="flex-none text-muted"
+          >
+            <path d="M9 5l7 7-7 7" />
+          </svg>
+        </Link>
+
+        {/*
           Snags and tasks, in that order, and only when there are any. A snag
           is about the aeroplane and so is everybody's; the tasks below are
           only the reader's own, because the whole list lives on its own screen.
