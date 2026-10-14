@@ -24,23 +24,29 @@
 \set ON_ERROR_STOP on
 
 -- ===========================================================================
--- 1. Ownership shares in a period must account for exactly 100%.
+-- 1. A period must account for exactly the company's shares -- no more, and
+--    crucially no fewer, since a period one share short would quietly bill
+--    1199/1200 of the hangarage and leave a sliver on nobody's invoice.
 -- ===========================================================================
 begin;
 do $$
 declare
-  v_ok boolean := false;
+  v_total int;
+  v_ok    boolean := false;
 begin
+  select total_shares into v_total from public.company
+  where id = '00000000-0000-0000-0000-00000000c000';
+
   begin
     insert into public.ownership_period (id, aircraft_id, effective_from)
     values ('00000000-0000-0000-0000-0000000dead1',
             '00000000-0000-0000-0000-0000000ac001',
             date '2027-01-01');
 
-    insert into public.ownership_share (period_id, member_id, pct)
+    insert into public.ownership_share (period_id, member_id, shares)
     values ('00000000-0000-0000-0000-0000000dead1',
             '00000000-0000-0000-0000-00000000a001',
-            60);
+            v_total - 1);
 
     -- The invariant trigger is deferred, so force it to fire now.
     set constraints all immediate;
@@ -49,9 +55,84 @@ begin
   end;
 
   if not v_ok then
-    raise exception 'FAIL  a period summing to 60%% was accepted';
+    raise exception 'FAIL  a period one share short of % was accepted', v_total;
   end if;
-  raise notice 'PASS  ownership shares must sum to 100';
+  raise notice 'PASS  a period must account for every share';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 1b. Why shares and not percent: an awkward split has to be exact. Thirds and
+--     sixths are the splits a percent column could not hold -- 33.3333% three
+--     times is 99.9999% -- so they are the ones asserted here. The shares are
+--     read back off the resolver, not off the insert, so this also proves the
+--     denominator travels with them.
+-- ===========================================================================
+begin;
+
+-- Enough of a roster for the widest split under test. The two seeded owners
+-- plus these six make eight.
+insert into public.member (id, full_name, email)
+select ('00000000-0000-0000-0000-00000000a00' || n)::uuid,
+       format('Test %s', n), format('t%s@example.test', n)
+from generate_series(3, 8) n;
+
+do $$
+declare
+  v_aircraft uuid := '00000000-0000-0000-0000-0000000ac001';
+  v_total    int;
+  v_ways     int;
+  v_each     int;
+  v_count    int;
+  v_sum      bigint;
+  v_min      int;
+  v_max      int;
+begin
+  select total_shares into v_total from public.company
+  where id = '00000000-0000-0000-0000-00000000c000';
+
+  foreach v_ways in array array[2, 3, 4, 6, 8] loop
+    if v_total % v_ways <> 0 then
+      raise exception 'FAIL  % shares does not divide % ways', v_total, v_ways;
+    end if;
+    v_each := v_total / v_ways;
+
+    insert into public.ownership_period (id, aircraft_id, effective_from, note)
+    values ('00000000-0000-0000-0000-0000000dead3',
+            v_aircraft, date '2027-06-01', format('%s ways', v_ways));
+
+    -- As many of the roster as the split needs, each holding the same count.
+    insert into public.ownership_share (period_id, member_id, shares)
+    select '00000000-0000-0000-0000-0000000dead3', m.id, v_each
+    from (
+      select id from public.member order by id limit v_ways
+    ) m;
+
+    set constraints all immediate;
+
+    select count(*), sum(o.shares), min(o.shares), max(o.shares)
+      into v_count, v_sum, v_min, v_max
+    from public.ownership_as_of(v_aircraft, date '2027-06-01') o;
+
+    if v_count <> v_ways then
+      raise exception 'FAIL  a % way split resolved to % owners', v_ways, v_count;
+    end if;
+    -- Equal to the share, and summing to the whole: the two things percent
+    -- could not do at once for three or six owners.
+    if (v_min, v_max, v_sum) is distinct from (v_each, v_each, v_total::bigint) then
+      raise exception
+        'FAIL  % ways came out % to %, summing to % of %',
+        v_ways, v_min, v_max, v_sum, v_total;
+    end if;
+
+    delete from public.ownership_share
+    where period_id = '00000000-0000-0000-0000-0000000dead3';
+    delete from public.ownership_period
+    where id = '00000000-0000-0000-0000-0000000dead3';
+    set constraints all immediate;
+  end loop;
+
+  raise notice 'PASS  2, 3, 4, 6 and 8 ways each divide the company exactly';
 end $$;
 rollback;
 
@@ -71,30 +152,32 @@ values ('00000000-0000-0000-0000-0000000dead2',
         date '2026-07-01',
         'Two more owners join');
 
-insert into public.ownership_share (period_id, member_id, pct) values
-  ('00000000-0000-0000-0000-0000000dead2', '00000000-0000-0000-0000-00000000a001', 25),
-  ('00000000-0000-0000-0000-0000000dead2', '00000000-0000-0000-0000-00000000a002', 25),
-  ('00000000-0000-0000-0000-0000000dead2', '00000000-0000-0000-0000-00000000a003', 25),
-  ('00000000-0000-0000-0000-0000000dead2', '00000000-0000-0000-0000-00000000a004', 25);
+insert into public.ownership_share (period_id, member_id, shares) values
+  ('00000000-0000-0000-0000-0000000dead2', '00000000-0000-0000-0000-00000000a001', 300),
+  ('00000000-0000-0000-0000-0000000dead2', '00000000-0000-0000-0000-00000000a002', 300),
+  ('00000000-0000-0000-0000-0000000dead2', '00000000-0000-0000-0000-00000000a003', 300),
+  ('00000000-0000-0000-0000-0000000dead2', '00000000-0000-0000-0000-00000000a004', 300);
 
 set constraints all immediate;
 
 do $$
 declare
   v_count int;
-  v_max   numeric;
+  v_max   int;
 begin
-  select count(*), max(pct) into v_count, v_max
+  select count(*), max(shares) into v_count, v_max
   from public.ownership_as_of('00000000-0000-0000-0000-0000000ac001', date '2026-06-30');
-  if v_count <> 2 or v_max <> 50 then
-    raise exception 'FAIL  June resolved to % owners, max %%%', v_count, v_max;
+  if v_count <> 2 or v_max <> 600 then
+    raise exception 'FAIL  June resolved to % owners, largest holding %',
+      v_count, v_max;
   end if;
-  raise notice 'PASS  a month before the change keeps the old 50/50 split';
+  raise notice 'PASS  a month before the change keeps the old half-each split';
 
-  select count(*), max(pct) into v_count, v_max
+  select count(*), max(shares) into v_count, v_max
   from public.ownership_as_of('00000000-0000-0000-0000-0000000ac001', date '2026-07-01');
-  if v_count <> 4 or v_max <> 25 then
-    raise exception 'FAIL  July resolved to % owners, max %%%', v_count, v_max;
+  if v_count <> 4 or v_max <> 300 then
+    raise exception 'FAIL  July resolved to % owners, largest holding %',
+      v_count, v_max;
   end if;
   raise notice 'PASS  new owners apply from their effective date forward';
 end $$;
@@ -1936,6 +2019,7 @@ declare
   v_total    numeric;
   v_qty      numeric;
   v_desc     text;
+  v_held     text;
   v_blocked  text;
 begin
   insert into public.flight
@@ -1982,7 +2066,7 @@ begin
   end if;
 
   -- Plus half of each monthly fixed cost, because this company splits them by
-  -- ownership percent and the two owners are 50/50.
+  -- shares held and the two owners hold half the company each.
   select sum(amount), max(quantity), min(description)
     into v_total, v_qty, v_desc
   from public.month_charges(v_aircraft, v_one, v_month)
@@ -1991,10 +2075,19 @@ begin
   if (v_total, v_qty) is distinct from (525.00, 0.5) then
     raise exception 'FAIL  the fixed costs came to % at a share of %', v_total, v_qty;
   end if;
-  -- The share is named in the description, which is why the Bills screen shows
-  -- those lines without a caption of their own.
-  if v_desc not like '%50% share%' then
-    raise exception 'FAIL  a fixed cost line reads "%"', v_desc;
+  -- The holding is named in the description, which is why the Bills screen
+  -- shows those lines without a caption of their own. It is named in SHARES,
+  -- not as a percent: three owners at a third each can otherwise put their
+  -- three invoices side by side and add up to 99.99% of the hangarage.
+  select format('%s of %s shares', o.shares, o.total_shares) into v_held
+  from public.ownership_as_of(v_aircraft, v_month) o
+  where o.member_id = v_one;
+
+  -- The null check is not defensive padding: without it, a holding that failed
+  -- to resolve makes `position` null and the assertion passes on nothing.
+  if v_held is null or position(v_held in v_desc) = 0 then
+    raise exception 'FAIL  a fixed cost line reads "%", not the holding "%"',
+      v_desc, coalesce(v_held, '(unresolved)');
   end if;
 
   -- Nothing is charged while the company is not GST registered, which it is
@@ -2427,7 +2520,7 @@ rollback;
 
 -- ===========================================================================
 -- 35. All three arms of fixed_cost_split are implemented even though this
---     company uses ownership_pct, because a setting that silently bills the
+--     company uses ownership_shares, because a setting that silently bills the
 --     wrong split when flipped is worse than no setting at all. Nobody will
 --     exercise the other two by hand before the day they are switched on.
 --
@@ -2443,9 +2536,9 @@ declare
   v_two      uuid := '00000000-0000-0000-0000-00000000a002';
   v_month    date := date '2026-04-01';
 begin
-  -- ownership_pct: the two owners are 50/50 from 1 Jan.
+  -- ownership_shares: the two owners hold half the company each from 1 Jan.
   if public.fixed_cost_share(v_aircraft, v_one, v_month) is distinct from 0.5 then
-    raise exception 'FAIL  a 50%% owner''s share of the hangar is %',
+    raise exception 'FAIL  a half owner''s share of the hangar is %',
       public.fixed_cost_share(v_aircraft, v_one, v_month);
   end if;
 
@@ -2463,16 +2556,16 @@ begin
   insert into public.ownership_period (id, aircraft_id, effective_from, note)
   values ('00000000-0000-0000-0000-0000000b0351', v_aircraft, date '2026-04-20',
           'A change part-way through April');
-  insert into public.ownership_share (period_id, member_id, pct) values
-    ('00000000-0000-0000-0000-0000000b0351', v_one, 100.0000),
-    ('00000000-0000-0000-0000-0000000b0351', v_two,   0.0000);
+  insert into public.ownership_share (period_id, member_id, shares) values
+    ('00000000-0000-0000-0000-0000000b0351', v_one, 1200),
+    ('00000000-0000-0000-0000-0000000b0351', v_two,    0);
 
   if public.fixed_cost_share(v_aircraft, v_one, date '2026-04-20') is distinct from 0.5 then
     raise exception 'FAIL  asked about the 20th, April''s share is %',
       public.fixed_cost_share(v_aircraft, v_one, date '2026-04-20');
   end if;
 
-  -- equal: the same answer here, which is the point -- 50/50 ownership and two
+  -- equal: the same answer here, which is the point -- half each and two
   -- owners sharing equally are the same split, so this arm is pinned by the
   -- case below it rather than by this one.
   update public.aircraft set fixed_cost_split = 'equal' where id = v_aircraft;
@@ -2481,15 +2574,15 @@ begin
       public.fixed_cost_share(v_aircraft, v_one, v_month);
   end if;
 
-  -- An owner who has exited sits at 0% and does not pay hangarage, so "equal"
-  -- means equal among the owners of record that month and not among everyone
-  -- still on the roster.
+  -- An owner who has exited holds 0 shares and does not pay hangarage, so
+  -- "equal" means equal among the owners of record that month and not among
+  -- everyone still on the roster.
   insert into public.ownership_period (id, aircraft_id, effective_from, note)
   values ('00000000-0000-0000-0000-0000000b0035', v_aircraft, date '2026-03-01',
           'One owner bought the other out');
-  insert into public.ownership_share (period_id, member_id, pct) values
-    ('00000000-0000-0000-0000-0000000b0035', v_one, 100.0000),
-    ('00000000-0000-0000-0000-0000000b0035', v_two,   0.0000);
+  insert into public.ownership_share (period_id, member_id, shares) values
+    ('00000000-0000-0000-0000-0000000b0035', v_one, 1200),
+    ('00000000-0000-0000-0000-0000000b0035', v_two,    0);
 
   if public.fixed_cost_share(v_aircraft, v_one, v_month) is distinct from 1.0 then
     raise exception 'FAIL  the sole remaining owner pays %',

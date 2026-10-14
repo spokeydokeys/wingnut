@@ -58,6 +58,9 @@ declare
   v_policies    int;
   v_count       int;
   v_max         numeric;
+  v_shares      int;
+  v_whole       int;
+  v_refused     boolean;
   v_unprotected text;
   v_flight      public.flight;
   v_again       public.flight;
@@ -154,23 +157,39 @@ begin
   select count(*) into v_policies from pg_policies where schemaname = 'public';
   raise notice 'PASS  every core table kept RLS enabled, % policies total', v_policies;
 
-  -- The business invariant: ownership resolves correctly by date.
-  select count(*), max(pct) into v_count, v_max
+  -- The business invariant: ownership resolves correctly by date, and the
+  -- resolver carries the denominator so the fraction is not left to the caller.
+  select count(*), max(o.shares), max(o.total_shares), max(o.fraction)
+    into v_count, v_shares, v_whole, v_max
   from public.ownership_as_of(
-    (select id from public.aircraft limit 1), current_date);
-  if v_count <> 2 or v_max <> 50 then
-    raise exception 'FAIL  ownership_as_of returned % owners, max %', v_count, v_max;
+    (select id from public.aircraft limit 1), current_date) o;
+  if v_count <> 2 or v_shares * 2 <> v_whole or v_max <> 0.5 then
+    raise exception
+      'FAIL  ownership_as_of returned % owners, largest % of %, fraction %',
+      v_count, v_shares, v_whole, v_max;
   end if;
   raise notice 'PASS  ownership_as_of works on vanilla Postgres';
 
-  -- The deferred 100%% invariant must have survived the dump.
+  -- The deferred sums-to-total invariant must have survived the dump. One
+  -- share short, not zero: an empty period is legal and is how a period is
+  -- cleared before it is deleted, so zero would prove nothing.
+  v_refused := false;
   begin
     insert into public.ownership_period (id, aircraft_id, effective_from)
-    values (gen_random_uuid(), (select id from public.aircraft limit 1), date '2030-01-01');
-    raise exception 'unreachable';
+    values ('00000000-0000-0000-0000-0000000dead9',
+            (select id from public.aircraft limit 1), date '2030-01-01');
+    insert into public.ownership_share (period_id, member_id, shares)
+    values ('00000000-0000-0000-0000-0000000dead9',
+            (select id from public.member order by id limit 1),
+            v_whole - 1);
+    set constraints all immediate;
   exception when others then
-    null;
+    v_refused := true;
   end;
+  if not v_refused then
+    raise exception 'FAIL  a period one share short of % was accepted', v_whole;
+  end if;
+  raise notice 'PASS  the sums-to-total trigger survived the dump';
 
   select count(*) into v_count from public.company;
   if v_count <> 1 then

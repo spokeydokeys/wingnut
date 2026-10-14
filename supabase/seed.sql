@@ -34,14 +34,15 @@
 -- here would mean local dev never exercises that path. Sign in locally with
 -- either email below and read the link out of Mailpit on port 54324.
 
-insert into public.company (id, legal_name, gst_registered, gst_number, fiscal_year_end_month, etransfer_recipient)
+insert into public.company (id, legal_name, gst_registered, gst_number, fiscal_year_end_month, etransfer_recipient, total_shares)
 values (
   '00000000-0000-0000-0000-00000000c000',
   'TODO(seed) Holding Co Ltd.',
   false,            -- TODO(seed) SPEC.md section 8 question 5
   null,             -- TODO(seed) required on invoices once GST registered
   12,               -- TODO(seed) confirm fiscal year end
-  null              -- TODO(seed) e-Transfer recipient address
+  null,             -- TODO(seed) e-Transfer recipient address
+  1200              -- confirmed: divides by 2, 3, 4, 6 and 8
 );
 
 insert into public.member (id, full_name, email, role) values
@@ -63,15 +64,17 @@ insert into public.aircraft (
   'flight_time',
   1.300,            -- confirmed: estimated tach = flight time / 1.3
   100.0,            -- TODO(seed) expected hours per year, drives calendar accrual
-  'ownership_pct',  -- confirmed: fixed costs split by ownership percent
+  'ownership_shares', -- confirmed: fixed costs split by shares held
   'round_up_tenth', -- confirmed: billed hours round up to 0.1 hr
   'any_other_owner',
   1000              -- 1 km place match radius, spec 4.2
 );
 
--- Opening ownership: two owners at 50/50. When the two prospective owners join,
--- insert a NEW ownership_period with all four shares rather than editing this
--- one, so previously closed months keep billing at the old split.
+-- Opening ownership: two owners, half the company each. When the two
+-- prospective owners join, insert a NEW ownership_period with all four
+-- holdings rather than editing this one, so previously closed months keep
+-- billing at the old split. Four ways is 300 each, which is why the company
+-- was divided into 1200 and not 100.
 insert into public.ownership_period (id, aircraft_id, effective_from, note)
 values (
   '00000000-0000-0000-0000-0000000b0001',
@@ -80,9 +83,9 @@ values (
   'Opening ownership, two co-owners'
 );
 
-insert into public.ownership_share (period_id, member_id, pct) values
-  ('00000000-0000-0000-0000-0000000b0001', '00000000-0000-0000-0000-00000000a001', 50.0000),
-  ('00000000-0000-0000-0000-0000000b0001', '00000000-0000-0000-0000-00000000a002', 50.0000);
+insert into public.ownership_share (period_id, member_id, shares) values
+  ('00000000-0000-0000-0000-0000000b0001', '00000000-0000-0000-0000-00000000a001', 600),
+  ('00000000-0000-0000-0000-0000000b0001', '00000000-0000-0000-0000-00000000a002', 600);
 
 -- ---------------------------------------------------------------------------
 -- Chart of accounts
@@ -148,8 +151,8 @@ insert into public.rate_component
 -- ---------------------------------------------------------------------------
 -- Opening fixed costs
 --
--- TODO(seed) real monthly hangarage and insurance. Split by ownership percent
--- per the aircraft's fixed_cost_split setting.
+-- TODO(seed) real monthly hangarage and insurance. Split by shares held per
+-- the aircraft's fixed_cost_split setting.
 -- ---------------------------------------------------------------------------
 
 insert into public.fixed_cost_schedule (id, aircraft_id, effective_from, note)
