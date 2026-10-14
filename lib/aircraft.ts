@@ -132,28 +132,45 @@ export async function getMaintenanceItem(
 /**
  * The running log: oil added, tyres pumped, the things nobody has to act on.
  *
- * Newest first, and the whole lot rather than a page of them. The question the
- * log is kept for is "is the engine using oil?", which is answered by reading
- * down the list, not by the top three -- and one aeroplane with two owners
- * writes a few dozen of these a year. The cap is there so a long-lived log
- * cannot turn this tab into a slow screen, not because 200 is a meaningful
- * number of notes.
+ * Newest first. `limit` is how many to show, not a ceiling on how many are
+ * kept: the Aircraft tab asks for a handful and says how many there are in
+ * total, and /aircraft/log asks for the lot. A cap with nothing to say it was
+ * applied would be the worst of the three, because the log's whole job is to
+ * be a complete record and a silently truncated one is not.
  */
 export async function getAircraftNotes(
   aircraftId: string,
-  limit = 200,
+  limit?: number,
 ): Promise<AircraftNote[]> {
   const supabase = await createClient();
-  const { data } = await supabase
+  let query = supabase
     .from("aircraft_note")
     .select("*, author:member(full_name)")
     .eq("aircraft_id", aircraftId)
     // created_at breaks the tie, so two notes written about the same day stay
     // in the order they were written.
     .order("noted_on", { ascending: false })
-    .order("created_at", { ascending: false })
-    .limit(limit);
+    .order("created_at", { ascending: false });
+  if (limit !== undefined) query = query.limit(limit);
+
+  const { data } = await query;
   return (data as AircraftNote[] | null) ?? [];
+}
+
+/**
+ * How many notes there are in total, for the "Log · 38 notes" header.
+ *
+ * `head: true` sends no rows back -- the count comes from the Content-Range
+ * header -- so showing the number costs nothing on a tab that only renders
+ * five of them.
+ */
+export async function countAircraftNotes(aircraftId: string): Promise<number> {
+  const supabase = await createClient();
+  const { count } = await supabase
+    .from("aircraft_note")
+    .select("id", { count: "exact", head: true })
+    .eq("aircraft_id", aircraftId);
+  return count ?? 0;
 }
 
 /**
