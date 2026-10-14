@@ -8,6 +8,8 @@
 # Produces, under exports/<timestamp>/:
 #   public.sql     the entire application schema and data
 #   auth_users.csv id and email of each auth user
+#   receipts.csv   inventory of every receipt image: key, size, checksum
+#   receipts/      the image bytes themselves, when API credentials are given
 #   MANIFEST.txt   what was taken, from where, with what versions
 #
 # pg_dump runs inside a postgres container matching the server major version,
@@ -17,6 +19,15 @@
 # refresh tokens are specific to the auth provider and worthless elsewhere. The
 # durable link between an auth user and a member is the email address, so that
 # is all a future provider needs in order to re-link accounts.
+#
+# Receipts are in two halves because the inventory and the bytes come from
+# different places. The inventory is in the database and so is always reachable
+# with the DB_URL already supplied; the bytes are behind the Storage API and
+# need a service role key, which is not something to require of a routine
+# nightly dump. Exporting the inventory unconditionally means a restore can
+# always tell whether it is complete -- a missing image is then a known gap
+# with a key to go and find, rather than a blank square somebody notices in a
+# year's time.
 
 set -euo pipefail
 
@@ -48,6 +59,53 @@ run_pg psql "$DB_URL" --no-psqlrc --quiet \
   -c "\copy (select id, email, created_at from auth.users order by created_at) to stdout with csv header" \
   > "$out_dir/auth_users.csv"
 
+> "$out_dir/receipts.csv"
+receipt_bytes_taken=0
+
+# storage.objects is outside --schema=public, so this inventory is the only
+# record of the images in the export. metadata->>'size' and ->>'eTag' are what
+# Storage records at upload; the eTag is the object's MD5, which is what makes
+# "did every file arrive?" answerable after a copy.
+if run_pg psql "$DB_URL" --no-psqlrc --quiet -tAc \
+     "select 1 from information_schema.tables
+       where table_schema = 'storage' and table_name = 'objects'" \
+     | grep -q 1; then
+  echo "  - receipt inventory"
+  run_pg psql "$DB_URL" --no-psqlrc --quiet \
+    -c "\copy (select name,
+                      coalesce(metadata->>'size', '') as bytes,
+                      coalesce(metadata->>'mimetype', '') as mimetype,
+                      btrim(coalesce(metadata->>'eTag', ''), '\"') as md5,
+                      created_at
+                 from storage.objects
+                where bucket_id = 'receipts'
+                order by name) to stdout with csv header" \
+    > "$out_dir/receipts.csv"
+
+  # The bytes, only if we were given a way to ask for them. Both of these are
+  # secrets: pass them in the environment, never on the command line.
+  if [[ -n "${SUPABASE_URL:-}" && -n "${SUPABASE_SERVICE_ROLE_KEY:-}" ]]; then
+    echo "  - receipt images"
+    while IFS=, read -r key _rest; do
+      [[ -z "$key" ]] && continue
+      dest="$out_dir/receipts/$key"
+      mkdir -p "$(dirname "$dest")"
+      curl --fail --silent --show-error \
+        -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+        "${SUPABASE_URL%/}/storage/v1/object/receipts/$key" \
+        -o "$dest"
+      receipt_bytes_taken=$((receipt_bytes_taken + 1))
+    done < <(tail -n +2 "$out_dir/receipts.csv")
+  else
+    echo "  - receipt images SKIPPED (set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY)"
+  fi
+fi
+
+receipt_rows=0
+if [[ -s "$out_dir/receipts.csv" ]]; then
+  receipt_rows=$(($(wc -l < "$out_dir/receipts.csv") - 1))
+fi
+
 server_version="$(run_pg psql "$DB_URL" --no-psqlrc --quiet -tAc 'show server_version')"
 
 {
@@ -58,6 +116,8 @@ server_version="$(run_pg psql "$DB_URL" --no-psqlrc --quiet -tAc 'show server_ve
   echo "source_host:     $(printf '%s' "$DB_URL" | sed -E 's#//[^@]*@#//***@#')"
   echo "public_sql_bytes: $(wc -c < "$out_dir/public.sql")"
   echo "auth_users_rows:  $(($(wc -l < "$out_dir/auth_users.csv") - 1))"
+  echo "receipts_listed:  $receipt_rows"
+  echo "receipts_fetched: $receipt_bytes_taken"
   echo
   echo "To restore onto vanilla PostgreSQL (target must be an EMPTY database;"
   echo "public.sql recreates the public schema and will not merge into an"
@@ -67,6 +127,11 @@ server_version="$(run_pg psql "$DB_URL" --no-psqlrc --quiet -tAc 'show server_ve
   echo "  psql \"\$TARGET\" -f public.sql"
   echo "Then re-invite users by the emails in auth_users.csv and repoint"
   echo "public.member.auth_user_id at the new provider's user ids."
+  echo
+  echo "Receipt images: public.expense.receipt_key holds the object key, and"
+  echo "receipts/ mirrors those keys as a directory tree. Copy that tree to the"
+  echo "new store under the same keys and rewrite lib/storage.ts to address it;"
+  echo "no row changes. Check receipts.csv against the copy before trusting it."
 } > "$out_dir/MANIFEST.txt"
 
 echo

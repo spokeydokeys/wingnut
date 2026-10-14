@@ -59,6 +59,80 @@ isOneToOne: false
                   Relationships: [
                     
                   ]
+                },"expense": {
+                  Row: {
+                    "aircraft_id": string,"charge_to": Database["public"]['Enums']["expense_charge_to"],"company_id": string,"created_at": string,"external_ref": string | null,"flight_id": string | null,"gl_account_code": string,"gst_amount": number,"id": string,"invoice_id": string | null,"litres": number | null,"note": string | null,"paid_by_member_id": string | null,"payer": Database["public"]['Enums']["expense_payer"],"receipt_key": string | null,"review_note": string | null,"reviewed_at": string | null,"reviewed_by": string | null,"snag_id": string | null,"spent_on": string,"status": Database["public"]['Enums']["expense_status"],"submitted_by": string,"synced_at": string | null,"tax_treatment": Database["public"]['Enums']["tax_treatment"],"total_amount": number,"updated_at": string,"vendor": string,"vendor_gst_number": string | null
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "aircraft_id": string,"charge_to"?: Database["public"]['Enums']["expense_charge_to"],"company_id": string,"created_at"?: string,"external_ref"?: string | null,"flight_id"?: string | null,"gl_account_code": string,"gst_amount"?: number,"id"?: string,"invoice_id"?: string | null,"litres"?: number | null,"note"?: string | null,"paid_by_member_id"?: string | null,"payer": Database["public"]['Enums']["expense_payer"],"receipt_key"?: string | null,"review_note"?: string | null,"reviewed_at"?: string | null,"reviewed_by"?: string | null,"snag_id"?: string | null,"spent_on": string,"status": Database["public"]['Enums']["expense_status"],"submitted_by": string,"synced_at"?: string | null,"tax_treatment"?: Database["public"]['Enums']["tax_treatment"],"total_amount": number,"updated_at"?: string,"vendor": string,"vendor_gst_number"?: string | null
+                  }
+                  Update: {
+                    "aircraft_id"?: string,"charge_to"?: Database["public"]['Enums']["expense_charge_to"],"company_id"?: string,"created_at"?: string,"external_ref"?: string | null,"flight_id"?: string | null,"gl_account_code"?: string,"gst_amount"?: number,"id"?: string,"invoice_id"?: string | null,"litres"?: number | null,"note"?: string | null,"paid_by_member_id"?: string | null,"payer"?: Database["public"]['Enums']["expense_payer"],"receipt_key"?: string | null,"review_note"?: string | null,"reviewed_at"?: string | null,"reviewed_by"?: string | null,"snag_id"?: string | null,"spent_on"?: string,"status"?: Database["public"]['Enums']["expense_status"],"submitted_by"?: string,"synced_at"?: string | null,"tax_treatment"?: Database["public"]['Enums']["tax_treatment"],"total_amount"?: number,"updated_at"?: string,"vendor"?: string,"vendor_gst_number"?: string | null
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "expense_aircraft_id_fkey"
+      columns: ["aircraft_id"]
+isOneToOne: false
+      referencedRelation: "aircraft"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "expense_company_id_fkey"
+      columns: ["company_id"]
+isOneToOne: false
+      referencedRelation: "company"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "expense_company_id_gl_account_code_fkey"
+      columns: ["company_id","gl_account_code"]
+isOneToOne: false
+      referencedRelation: "gl_account"
+      referencedColumns: ["company_id","code"]
+    },{
+      foreignKeyName: "expense_flight_id_fkey"
+      columns: ["flight_id"]
+isOneToOne: false
+      referencedRelation: "flight"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "expense_flight_id_fkey"
+      columns: ["flight_id"]
+isOneToOne: false
+      referencedRelation: "flight_running"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "expense_invoice_id_fkey"
+      columns: ["invoice_id"]
+isOneToOne: false
+      referencedRelation: "invoice"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "expense_paid_by_member_id_fkey"
+      columns: ["paid_by_member_id"]
+isOneToOne: false
+      referencedRelation: "member"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "expense_reviewed_by_fkey"
+      columns: ["reviewed_by"]
+isOneToOne: false
+      referencedRelation: "member"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "expense_snag_id_fkey"
+      columns: ["snag_id"]
+isOneToOne: false
+      referencedRelation: "snag"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "expense_submitted_by_fkey"
+      columns: ["submitted_by"]
+isOneToOne: false
+      referencedRelation: "member"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"fixed_cost": {
                   Row: {
                     "gl_account_code": string,"id": string,"kind": Database["public"]['Enums']["ledger_entry_kind"],"monthly_amount": number,"name": string,"schedule_id": string,"sort_order": number,"tax_treatment": Database["public"]['Enums']["tax_treatment"]
@@ -743,6 +817,9 @@ isOneToOne: false
 "distance_m":
 { Args: { "p_lat1": number,"p_lat2": number,"p_lon1": number,"p_lon2": number }; Returns: number
                            },
+"expense_duplicates":
+{ Args: { "p_expense_id": string }; Returns: string[]
+                           },
 "fixed_cost_share":
 { Args: { "p_aircraft_id": string,"p_member_id": string,"p_month": string }; Returns: number
                            },
@@ -777,8 +854,14 @@ isOneToOne: false
               "amount": number,"description": string,"gl_account_code": string,"gst_amount": number,"kind": Database["public"]['Enums']["ledger_entry_kind"],"period_hours": number,"quantity": number,"sort_order": number,"tax_treatment": Database["public"]['Enums']["tax_treatment"],"unit_rate": number
             }[]
                            },
+"month_expense_ids":
+{ Args: { "p_aircraft_id": string,"p_member_id": string,"p_month": string }; Returns: string[]
+                           },
 "month_flight_ids":
 { Args: { "p_aircraft_id": string,"p_member_id": string,"p_month": string }; Returns: string[]
+                           },
+"month_is_closed":
+{ Args: { "p_company_id": string,"p_month": string }; Returns: boolean
                            },
 "next_invoice_number":
 { Args: { "p_company_id": string }; Returns: number
@@ -811,6 +894,9 @@ isOneToOne: false
                            },
 "rate_schedule_as_of":
 { Args: { "p_aircraft_id": string,"p_on": string }; Returns: string
+                           },
+"receipt_is_locked":
+{ Args: { "p_object_key": string }; Returns: boolean
                            },
 "record_payment":
 { Args: { "p_amount": number,"p_member_id": string,"p_note"?: string,"p_paid_on": string }; Returns: string
@@ -902,7 +988,7 @@ isOneToOne: false
                            }
           }
           Enums: {
-            "billing_basis": "flight_time"|"tach","expense_approval_rule": "any_other_owner"|"admin_only","fix_source": "gps"|"manual","fix_which": "start"|"end","fixed_cost_split": "ownership_pct"|"equal"|"hours_flown","flight_status": "draft"|"confirmed"|"billed","gl_account_type": "asset"|"liability"|"equity"|"revenue"|"expense","hour_rounding": "round_up_tenth"|"nearest_tenth"|"exact","invoice_status": "draft"|"issued"|"settled"|"void","ledger_entry_kind": "flight_charge"|"hangarage"|"insurance"|"expense_credit"|"payment"|"payout"|"adjustment","maintenance_basis": "tach"|"calendar","maintenance_kind": "life_limit"|"recurring_inspection"|"recurring_task","member_role": "pilot"|"admin","place_kind": "airport"|"water_aerodrome"|"heliport"|"bay"|"lake"|"dock"|"other","place_source": "ourairports"|"osm"|"bcgnis"|"saved","rate_component_kind": "fuel"|"reserve"|"operating","snag_status": "open"|"watch"|"cleared","tach_reading_source": "manual"|"flight","task_recurrence": "month_close"|"interval_days","task_status": "open"|"done"|"cancelled","tax_treatment": "taxable"|"zero_rated"|"exempt"|"out_of_scope"
+            "billing_basis": "flight_time"|"tach","expense_approval_rule": "any_other_owner"|"admin_only","expense_charge_to": "pool"|"reserve","expense_payer": "company"|"member","expense_status": "recorded"|"submitted"|"approved"|"rejected","fix_source": "gps"|"manual","fix_which": "start"|"end","fixed_cost_split": "ownership_pct"|"equal"|"hours_flown","flight_status": "draft"|"confirmed"|"billed","gl_account_type": "asset"|"liability"|"equity"|"revenue"|"expense","hour_rounding": "round_up_tenth"|"nearest_tenth"|"exact","invoice_status": "draft"|"issued"|"settled"|"void","ledger_entry_kind": "flight_charge"|"hangarage"|"insurance"|"expense_credit"|"payment"|"payout"|"adjustment","maintenance_basis": "tach"|"calendar","maintenance_kind": "life_limit"|"recurring_inspection"|"recurring_task","member_role": "pilot"|"admin","place_kind": "airport"|"water_aerodrome"|"heliport"|"bay"|"lake"|"dock"|"other","place_source": "ourairports"|"osm"|"bcgnis"|"saved","rate_component_kind": "fuel"|"reserve"|"operating","snag_status": "open"|"watch"|"cleared","tach_reading_source": "manual"|"flight","task_recurrence": "month_close"|"interval_days","task_status": "open"|"done"|"cancelled","tax_treatment": "taxable"|"zero_rated"|"exempt"|"out_of_scope"
           }
           CompositeTypes: {
             [_ in never]: never
@@ -1018,7 +1104,7 @@ export type CompositeTypes<
 export const Constants = {
   "public": {
           Enums: {
-            "billing_basis": ["flight_time", "tach"],"expense_approval_rule": ["any_other_owner", "admin_only"],"fix_source": ["gps", "manual"],"fix_which": ["start", "end"],"fixed_cost_split": ["ownership_pct", "equal", "hours_flown"],"flight_status": ["draft", "confirmed", "billed"],"gl_account_type": ["asset", "liability", "equity", "revenue", "expense"],"hour_rounding": ["round_up_tenth", "nearest_tenth", "exact"],"invoice_status": ["draft", "issued", "settled", "void"],"ledger_entry_kind": ["flight_charge", "hangarage", "insurance", "expense_credit", "payment", "payout", "adjustment"],"maintenance_basis": ["tach", "calendar"],"maintenance_kind": ["life_limit", "recurring_inspection", "recurring_task"],"member_role": ["pilot", "admin"],"place_kind": ["airport", "water_aerodrome", "heliport", "bay", "lake", "dock", "other"],"place_source": ["ourairports", "osm", "bcgnis", "saved"],"rate_component_kind": ["fuel", "reserve", "operating"],"snag_status": ["open", "watch", "cleared"],"tach_reading_source": ["manual", "flight"],"task_recurrence": ["month_close", "interval_days"],"task_status": ["open", "done", "cancelled"],"tax_treatment": ["taxable", "zero_rated", "exempt", "out_of_scope"]
+            "billing_basis": ["flight_time", "tach"],"expense_approval_rule": ["any_other_owner", "admin_only"],"expense_charge_to": ["pool", "reserve"],"expense_payer": ["company", "member"],"expense_status": ["recorded", "submitted", "approved", "rejected"],"fix_source": ["gps", "manual"],"fix_which": ["start", "end"],"fixed_cost_split": ["ownership_pct", "equal", "hours_flown"],"flight_status": ["draft", "confirmed", "billed"],"gl_account_type": ["asset", "liability", "equity", "revenue", "expense"],"hour_rounding": ["round_up_tenth", "nearest_tenth", "exact"],"invoice_status": ["draft", "issued", "settled", "void"],"ledger_entry_kind": ["flight_charge", "hangarage", "insurance", "expense_credit", "payment", "payout", "adjustment"],"maintenance_basis": ["tach", "calendar"],"maintenance_kind": ["life_limit", "recurring_inspection", "recurring_task"],"member_role": ["pilot", "admin"],"place_kind": ["airport", "water_aerodrome", "heliport", "bay", "lake", "dock", "other"],"place_source": ["ourairports", "osm", "bcgnis", "saved"],"rate_component_kind": ["fuel", "reserve", "operating"],"snag_status": ["open", "watch", "cleared"],"tach_reading_source": ["manual", "flight"],"task_recurrence": ["month_close", "interval_days"],"task_status": ["open", "done", "cancelled"],"tax_treatment": ["taxable", "zero_rated", "exempt", "out_of_scope"]
           }
         }
 } as const
