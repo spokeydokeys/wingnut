@@ -2,7 +2,6 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { BackHeader } from "@/components/back-header";
-import { BookingFortnight } from "@/components/booking-fortnight";
 import { BookingMonth } from "@/components/booking-month";
 import { BookingRow } from "@/components/booking-row";
 import {
@@ -21,24 +20,21 @@ import { requireMember } from "@/lib/dal";
 import { getAircraft } from "@/lib/flights";
 import { formatCalendarDay, toDateInputValue } from "@/lib/time";
 
-// Every view is anchored to today, which moves on its own.
+// Both views are anchored to today, which moves on its own.
 export const dynamic = "force-dynamic";
 
-const FORTNIGHT = 14;
-
 /**
- * The calendar, in whichever of its three shapes was asked for.
+ * The calendar, in whichever of its two shapes was asked for.
  *
  * SPEC.md 4.5 asks for a calendar with the other pilot's bookings visible, and
- * the three views are three questions, not three decorations:
+ * the two views are two questions, not two decorations:
  *
- *   agenda     what is booked, soonest first -- the usual one
- *   fortnight  when could I go, free days and all
- *   month      which weekend in March, and is anyone on it
+ *   agenda  what is booked, soonest first -- the usual one
+ *   month   which weekend in March, and is anyone on it
  *
- * All three read the same rows and all three send you to the same booking
- * screen. The view lives in the URL so the calendar can be sent, reloaded, and
- * come back to from a booking without snapping to a shape nobody chose.
+ * Both read the same rows and both send you to the same booking screen. The
+ * view lives in the URL so the calendar can be sent, reloaded, and come back to
+ * from a booking without snapping to a shape nobody chose.
  */
 export default async function Bookings({ searchParams }: PageProps<"/bookings">) {
   const member = await requireMember();
@@ -48,8 +44,7 @@ export default async function Bookings({ searchParams }: PageProps<"/bookings">)
 
   const query = await searchParams;
   const asked = String(query.view ?? "");
-  const view: BookingView =
-    asked === "fortnight" || asked === "month" ? asked : "agenda";
+  const view: BookingView = asked === "month" ? "month" : "agenda";
 
   const today = toDateInputValue();
 
@@ -72,13 +67,9 @@ export default async function Bookings({ searchParams }: PageProps<"/bookings">)
       <main className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 pt-3.5 pb-4">
         <BookingViewSwitcher current={view} />
 
-        {view === "agenda" && (
+        {view === "agenda" ? (
           <Agenda aircraftId={aircraft.id} memberId={member.id} />
-        )}
-        {view === "fortnight" && (
-          <Fortnight aircraftId={aircraft.id} memberId={member.id} today={today} />
-        )}
-        {view === "month" && (
+        ) : (
           <Month
             aircraftId={aircraft.id}
             memberId={member.id}
@@ -122,31 +113,6 @@ async function Agenda({
       </div>
     </div>
   ));
-}
-
-/** The next fourteen days, free ones included. */
-async function Fortnight({
-  aircraftId,
-  memberId,
-  today,
-}: {
-  aircraftId: string;
-  memberId: string;
-  today: string;
-}) {
-  const end = addDays(today, FORTNIGHT);
-  const byDate = bookingsByDate(await getBookingsBetween(aircraftId, today, end));
-
-  const days = Array.from({ length: FORTNIGHT }, (_, offset) => {
-    const date = addDays(today, offset);
-    return {
-      date,
-      label: offset === 0 ? "Today" : offset === 1 ? "Tomorrow" : null,
-      bookings: byDate.get(date) ?? [],
-    };
-  });
-
-  return <BookingFortnight days={days} memberId={memberId} />;
 }
 
 /** A month of squares, and the day picked out of it. */

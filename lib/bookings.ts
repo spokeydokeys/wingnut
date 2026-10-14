@@ -105,12 +105,12 @@ export function groupByDay(bookings: Booking[]): BookingDay[] {
 }
 
 /**
- * Everything starting inside a window of calendar days, for the two grids.
+ * Everything starting inside a window of calendar days, for the month grid.
  *
  * The window is given as the aeroplane's own dates and turned into instants
- * here, by the same `fromInputValue` the booking form writes through -- so the
- * fortnight that starts "today" starts at midnight in Victoria, not at 17:00
- * the evening before, which is what a bare date cast would have meant.
+ * here, by the same `fromInputValue` the booking form writes through -- so a
+ * month that starts on the 1st starts at midnight in Victoria, not at 17:00 on
+ * the 31st, which is what a bare date cast would have meant.
  *
  * Filtered on `start_at` rather than on an overlap, so that each booking lands
  * in exactly one cell: a grid that showed a slot in two squares would read as
@@ -154,8 +154,8 @@ export function bookingsByDate(bookings: Booking[]): Map<string, Booking[]> {
  * `2026-10-19` plus or minus a number of days.
  *
  * Calendar arithmetic in UTC on a plain date, never 86,400,000ms added to an
- * instant: the two disagree on the mornings the clocks change, and a fortnight
- * that skipped or repeated a day would be a calendar nobody could trust.
+ * instant: the two disagree on the mornings the clocks change, and a grid that
+ * skipped or repeated a day would be a calendar nobody could trust.
  */
 export function addDays(date: string, days: number): string {
   const [y, m, d] = date.split("-").map(Number);

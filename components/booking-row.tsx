@@ -6,10 +6,10 @@ import { formatClock } from "@/lib/time";
 /**
  * One booking in a list: when, who, and what for.
  *
- * Shared by the agenda and the fortnight so the two cannot drift into saying
- * the same slot differently. The whole row is the link, because the thing you
- * want from a booking is the rest of the note and the way to give it up, and
- * both of those are on its own screen.
+ * Shared by the agenda and the month's day panel so the two cannot drift into
+ * saying the same slot differently. The whole row is the link, because the
+ * thing you want from a booking is the rest of the note and the way to give it
+ * up, and both of those are on its own screen.
  *
  * "You" rather than your own name: the question this list answers is whether
  * the aeroplane is free, and reading your own name back is a slower way of
