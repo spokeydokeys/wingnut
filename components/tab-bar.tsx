@@ -3,9 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-// The four-tab nav from the wireframes. SPEC.md 3 puts flying, paying and
-// snags on their own tabs and everything else behind More, so this list is the
-// whole information architecture and is not meant to grow.
+// The nav from the wireframes, plus bookings. SPEC.md 3 puts the calendar
+// behind More, which was wrong in practice: booking the aeroplane happens for
+// basically every flight, just days before it rather than at the aeroplane. A
+// thing done that often is not a thing to go looking for.
+//
+// Five is the ceiling. This list is the whole information architecture, and
+// anything else that wants on it has to argue another one off.
 const TABS = [
   {
     href: "/",
@@ -21,6 +25,18 @@ const TABS = [
     href: "/aircraft",
     label: "Aircraft",
     icon: <path d="M12 2l1 2v5l9 5v2l-9-2.5V19l3 2v1l-4-1-4 1v-1l3-2v-5.5L2 16v-2l9-5V4z" />,
+  },
+  {
+    href: "/bookings",
+    label: "Bookings",
+    icon: (
+      <>
+        <rect x="3" y="5" width="18" height="16" rx="2" />
+        <path d="M3 10h18" />
+        <path d="M8 3v4" />
+        <path d="M16 3v4" />
+      </>
+    ),
   },
   {
     href: "/bills",

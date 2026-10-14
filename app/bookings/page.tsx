@@ -1,13 +1,13 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { BackHeader } from "@/components/back-header";
 import { BookingMonth } from "@/components/booking-month";
 import { BookingRow } from "@/components/booking-row";
 import {
   BookingViewSwitcher,
   type BookingView,
 } from "@/components/booking-view-switcher";
+import { TabBar } from "@/components/tab-bar";
 import {
   addDays,
   bookingsByDate,
@@ -35,6 +35,11 @@ export const dynamic = "force-dynamic";
  * Both read the same rows and both send you to the same booking screen. The
  * view lives in the URL so the calendar can be sent, reloaded, and come back to
  * from a booking without snapping to a shape nobody chose.
+ *
+ * A tab, not a door behind More, which is where SPEC.md 3 put it: claiming the
+ * aeroplane happens for roughly every flight, a few days ahead of it. The spec
+ * was sorting screens by when they are used, and this one is used as often as
+ * the Aircraft tab beside it.
  */
 export default async function Bookings({ searchParams }: PageProps<"/bookings">) {
   const member = await requireMember();
@@ -50,21 +55,17 @@ export default async function Bookings({ searchParams }: PageProps<"/bookings">)
 
   return (
     <>
-      <BackHeader
-        href="/more"
-        label="More"
-        title="Bookings"
-        action={
-          <Link
-            href="/bookings/new"
-            className="flex h-11 items-center rounded-[10px] border-[1.5px] border-ink bg-surface px-4 text-[15px] font-semibold"
-          >
-            + Book
-          </Link>
-        }
-      />
+      <header className="flex flex-none items-center justify-between px-4 pt-4 pb-1">
+        <h1 className="text-[26px] font-semibold">Bookings</h1>
+        <Link
+          href="/bookings/new"
+          className="flex h-11 items-center rounded-[10px] border-[1.5px] border-ink bg-surface px-4 text-[15px] font-semibold"
+        >
+          + Book
+        </Link>
+      </header>
 
-      <main className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 pt-3.5 pb-4">
+      <main className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 pt-3 pb-4">
         <BookingViewSwitcher current={view} />
 
         {view === "agenda" ? (
@@ -79,6 +80,8 @@ export default async function Bookings({ searchParams }: PageProps<"/bookings">)
           />
         )}
       </main>
+
+      <TabBar />
     </>
   );
 }
