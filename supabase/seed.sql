@@ -272,6 +272,27 @@ insert into public.snag (
    '00000000-0000-0000-0000-0000000f0001');
 
 -- ---------------------------------------------------------------------------
+-- Sample log notes
+--
+-- TODO(seed) DELETE these two rows. They are here so the Log section on the
+-- Aircraft tab has something to lay out in local development.
+--
+-- Neither carries a tach on purpose. A note's tach is mirrored into
+-- tach_reading, so a seeded one would become the newest reading and quietly
+-- move the running estimate -- which is the figure every tach-based test
+-- measures from. The mirror is exercised by the verification scripts instead,
+-- where the expected value is read off the row under test.
+-- ---------------------------------------------------------------------------
+
+insert into public.aircraft_note (aircraft_id, body, noted_on, noted_by) values
+  ('00000000-0000-0000-0000-0000000ac001',
+   'Added a qt of oil. Was about a quart down on the dipstick.',
+   date '2026-10-06', '00000000-0000-0000-0000-00000000a001'),
+  ('00000000-0000-0000-0000-0000000ac001',
+   'Put air in both main tires, they were soft after the cold snap.',
+   date '2026-09-28', '00000000-0000-0000-0000-00000000a002');
+
+-- ---------------------------------------------------------------------------
 -- Flights, and the September close
 --
 -- TODO(seed) DELETE everything below. It is invented, and exists so the Bills

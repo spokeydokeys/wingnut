@@ -3,9 +3,16 @@ import Link from "next/link";
 import { MaintenanceRow } from "@/components/maintenance-row";
 import { SnagCard } from "@/components/snag-card";
 import { TabBar } from "@/components/tab-bar";
-import { getLiveSnags, getMaintenance, getTachEstimate } from "@/lib/aircraft";
+import {
+  getAircraftNotes,
+  getLiveSnags,
+  getMaintenance,
+  getTachEstimate,
+} from "@/lib/aircraft";
 import { requireMember } from "@/lib/dal";
 import { getAircraft } from "@/lib/flights";
+import { formatHours } from "@/lib/format";
+import { formatDate } from "@/lib/time";
 
 // Due-soon and overdue are computed against today's date and the running tach
 // estimate, both of which move. Nothing here is cacheable.
@@ -43,13 +50,14 @@ export default async function Aircraft() {
     );
   }
 
-  const [snags, maintenance, tachNow] = await Promise.all([
+  const [snags, maintenance, tachNow, notes] = await Promise.all([
     getLiveSnags(aircraft.id),
     getMaintenance(aircraft.id),
     // For the snags that come back due after a number of hours flown. The
     // maintenance rows carry the same figure, but a snag is not a maintenance
     // item and should not have to borrow one's row to know the tach.
     getTachEstimate(aircraft.id),
+    getAircraftNotes(aircraft.id),
   ]);
 
   const open = snags.filter((snag) => snag.status === "open").length;
@@ -103,6 +111,56 @@ export default async function Aircraft() {
           <div className="flex-none divide-y divide-hairline rounded-[14px] border border-line bg-surface px-3.5">
             {maintenance.map((item) => (
               <MaintenanceRow key={item.id} item={item} />
+            ))}
+          </div>
+        )}
+
+        {/*
+          Last, and below Maintenance on purpose. Nothing in this list needs
+          doing -- it is the record of what has already been done, kept so that
+          "is the engine using oil?" can be answered by reading down a column
+          instead of opening every flight one at a time.
+        */}
+        <div className="mt-1.5 flex items-center justify-between px-0.5">
+          <h2 className="field-label">Log</h2>
+          <Link
+            href="/aircraft/note/new"
+            className="flex min-h-11 items-center text-sm font-semibold text-accent"
+          >
+            Add a note
+          </Link>
+        </div>
+
+        {notes.length === 0 ? (
+          <p className="flex-none rounded-[14px] border border-line bg-surface px-3.5 py-3 text-[15px] text-muted">
+            Nothing logged. Oil added, air in the tires, anything you did that
+            needs no decision from anyone.
+          </p>
+        ) : (
+          <div className="flex-none divide-y divide-hairline rounded-[14px] border border-line bg-surface px-3.5">
+            {notes.map((note) => (
+              <div key={note.id} className="py-3">
+                {/* whitespace-pre-line so a note written as two lines stays two. */}
+                <p className="text-[15px] whitespace-pre-line">{note.body}</p>
+                <p className="mt-0.5 text-[13px] text-muted">
+                  {formatDate(note.noted_on)}
+                  {note.author && ` · ${note.author.full_name}`}
+                  {/*
+                    The tach is shown because it is the one part of a note that
+                    changes what the rest of this screen says: it is mirrored
+                    into tach_reading, so the due-dates above are measured from
+                    it.
+                  */}
+                  {note.tach !== null && (
+                    <>
+                      {" · "}
+                      <span className="numeric">
+                        {formatHours(Number(note.tach))}
+                      </span>
+                    </>
+                  )}
+                </p>
+              </div>
             ))}
           </div>
         )}

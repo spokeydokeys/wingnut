@@ -214,6 +214,44 @@ export async function logTachReading(_prev: Failed | null, form: FormData): Prom
 }
 
 /**
+ * A note in the running log: "added a qt of oil", "put air in the tires".
+ *
+ * The tach is optional and, when given, is mirrored into tach_reading by
+ * `aircraft_note_sync_tach_reading` -- so this is one insert, and a number read
+ * while topping up the oil moves the maintenance due-dates without the writer
+ * having to go and log it a second time.
+ */
+export async function addAircraftNote(_prev: Failed | null, form: FormData): Promise<Failed | never> {
+  const member = await requireMember();
+  const aircraft = await getAircraft();
+  if (!aircraft) redirect("/no-access");
+
+  const body = String(form.get("body") ?? "").trim();
+  if (body === "") return { error: "Say what you did." };
+
+  const notedOn = String(form.get("noted_on") ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(notedOn)) {
+    return { error: "That date could not be read." };
+  }
+
+  // Sent as a plain date: the trigger stamps the mirrored reading at noon in
+  // the aeroplane's zone, the same convention logTachReading uses by hand.
+  const supabase = await createClient();
+  const { error } = await supabase.from("aircraft_note").insert({
+    aircraft_id: aircraft.id,
+    body,
+    noted_on: notedOn,
+    noted_by: member.id,
+    tach: readNumber(form.get("tach")),
+  });
+
+  if (error) return { error: error.message };
+
+  revalidatePath("/aircraft", "layout");
+  redirect("/aircraft");
+}
+
+/**
  * SPEC.md 4.4: "Marking a task done logs who, when and tach, and resets its
  * counter." The log is the counter, so this is one insert.
  *

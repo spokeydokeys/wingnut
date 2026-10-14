@@ -14,6 +14,9 @@ export type Snag = SnagRow & {
 export type MaintenanceStatus =
   Database["public"]["Views"]["maintenance_status"]["Row"];
 export type TachReading = Database["public"]["Tables"]["tach_reading"]["Row"];
+export type AircraftNote = Database["public"]["Tables"]["aircraft_note"]["Row"] & {
+  author: { full_name: string } | null;
+};
 
 /**
  * Reads for the Aircraft tab.
@@ -124,6 +127,33 @@ export async function getMaintenanceItem(
     .eq("id", id)
     .maybeSingle();
   return data ?? null;
+}
+
+/**
+ * The running log: oil added, tyres pumped, the things nobody has to act on.
+ *
+ * Newest first, and the whole lot rather than a page of them. The question the
+ * log is kept for is "is the engine using oil?", which is answered by reading
+ * down the list, not by the top three -- and one aeroplane with two owners
+ * writes a few dozen of these a year. The cap is there so a long-lived log
+ * cannot turn this tab into a slow screen, not because 200 is a meaningful
+ * number of notes.
+ */
+export async function getAircraftNotes(
+  aircraftId: string,
+  limit = 200,
+): Promise<AircraftNote[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("aircraft_note")
+    .select("*, author:member(full_name)")
+    .eq("aircraft_id", aircraftId)
+    // created_at breaks the tie, so two notes written about the same day stay
+    // in the order they were written.
+    .order("noted_on", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  return (data as AircraftNote[] | null) ?? [];
 }
 
 /**
