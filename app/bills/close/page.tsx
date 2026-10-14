@@ -5,6 +5,7 @@ import { BackHeader } from "@/components/back-header";
 import { InlineAction } from "@/components/inline-action";
 import { getDrafts, getRoster } from "@/lib/bills";
 import { requireAdmin } from "@/lib/dal";
+import { getAwaitingApproval } from "@/lib/expenses";
 import { formatMoney } from "@/lib/format";
 import { currentMonthStart, formatMonthLong } from "@/lib/time";
 
@@ -39,8 +40,20 @@ export default async function CloseMonth({
   const param = typeof asked === "string" && /^\d{4}-\d{2}$/.test(asked) ? asked : lastMonth();
   const month = `${param}-01`;
 
-  const [drafts, roster] = await Promise.all([getDrafts(month), getRoster()]);
+  const [drafts, roster, waiting] = await Promise.all([
+    getDrafts(month),
+    getRoster(),
+    getAwaitingApproval(),
+  ]);
   const outstanding = roster.reduce((t, m) => t + m.balance, 0);
+
+  // Receipts bought in this month or earlier that nobody has agreed to yet.
+  // `month_expense_ids` credits on reviewed_at, so these are not on the drafts
+  // below and will not be until somebody agrees to them -- at which point they
+  // are swept into whichever month is closed next. Later ones are not this
+  // month's problem.
+  const unagreed = waiting.filter((e) => e.spent_on.slice(0, 7) <= param);
+  const unagreedTotal = unagreed.reduce((t, e) => t + Number(e.total_amount), 0);
 
   return (
     <>
@@ -72,6 +85,34 @@ export default async function CloseMonth({
             Show
           </button>
         </form>
+
+        {/*
+          Above the drafts because it is the thing to deal with before building
+          them, not after reading them. A caution rather than a refusal: issuing
+          with a receipt outstanding is not wrong, it just means the money comes
+          back a month later than whoever is out of pocket expects.
+        */}
+        {unagreed.length > 0 && (
+          <Link
+            href="/receipts"
+            className="flex-none rounded-[14px] border border-caution-line bg-caution px-3.5 py-3"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[15px] font-semibold text-caution-text">
+                {unagreed.length === 1
+                  ? "1 receipt is still waiting to be agreed"
+                  : `${unagreed.length} receipts are still waiting to be agreed`}
+              </span>
+              <span className="numeric flex-none text-[15px] text-caution-text">
+                {formatMoney(unagreedTotal)}
+              </span>
+            </div>
+            <p className="mt-0.5 text-[13px] text-caution-text">
+              Not credited on the drafts below. Agree to them first and they
+              land on this month; leave them and they land on the next one.
+            </p>
+          </Link>
+        )}
 
         <section className="flex-none rounded-[14px] border border-line bg-surface px-3.5 py-3">
           <h2 className="font-semibold">{formatMonthLong(month)} drafts</h2>
