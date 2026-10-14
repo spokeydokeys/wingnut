@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 
 /**
  * The back-arrow header on a screen that is not a tab.
@@ -13,15 +14,22 @@ export function BackHeader({
   label,
   title,
   subtitle,
+  action,
 }: {
   href: string;
   label: string;
   title: string;
   subtitle?: string;
+  /**
+   * The one thing this screen is for, if it is a list you add to. Sits beside
+   * the back arrow rather than beside the title, so a long title can wrap
+   * without pushing it off the edge.
+   */
+  action?: ReactNode;
 }) {
   return (
     <>
-      <header className="flex min-h-14 flex-none items-center py-3 pr-4 pl-2">
+      <header className="flex min-h-14 flex-none items-center justify-between py-3 pr-4 pl-2">
         <Link
           href={href}
           className="flex min-h-11 items-center gap-0.5 px-2 text-base font-medium"
@@ -41,6 +49,7 @@ export function BackHeader({
           </svg>
           {label}
         </Link>
+        {action}
       </header>
 
       <div className="flex-none px-4">
