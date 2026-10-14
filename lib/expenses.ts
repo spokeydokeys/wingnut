@@ -110,6 +110,54 @@ export async function getExpenses(limit = 40): Promise<ExpenseWithNames[]> {
 }
 
 /**
+ * Vendors to offer under "Bought from", this member's most-used first.
+ *
+ * Ranked by how often THEY have bought there, because the list is there to
+ * save typing and the place you fuel at every second Saturday is the one worth
+ * one tap. Vendors only the other owners have used still appear, below the
+ * member's own -- the first time you fuel somewhere they already have, the
+ * spelling they used is the one that keeps the two rows looking like one place.
+ *
+ * Counted in TypeScript over a capped read rather than in SQL. A `group by`
+ * would mean an RPC (PostgREST cannot aggregate), and an RPC is a migration
+ * plus a line in the restore checks for a list that is a few dozen rows long.
+ */
+export async function getVendorSuggestions(
+  memberId: string,
+  limit = 12,
+): Promise<string[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("expense")
+    .select("vendor, submitted_by, paid_by_member_id")
+    .order("spent_on", { ascending: false })
+    .limit(400);
+
+  // Keyed on the vendor as typed, so two spellings stay two entries. Merging
+  // them would mean picking a winner, and the one this screen would discard is
+  // the one on the paper in the pilot's hand.
+  const tally = new Map<string, { mine: number; total: number }>();
+  for (const row of data ?? []) {
+    const name = row.vendor.trim();
+    if (name === "") continue;
+    const seen = tally.get(name) ?? { mine: 0, total: 0 };
+    seen.total += 1;
+    if (row.paid_by_member_id === memberId || row.submitted_by === memberId) {
+      seen.mine += 1;
+    }
+    tally.set(name, seen);
+  }
+
+  return [...tally.entries()]
+    .sort(
+      ([aName, a], [bName, b]) =>
+        b.mine - a.mine || b.total - a.total || aName.localeCompare(bName),
+    )
+    .slice(0, limit)
+    .map(([name]) => name);
+}
+
+/**
  * The approvals queue: oldest first.
  *
  * Oldest first on purpose, unlike every other list in the app. This one is a

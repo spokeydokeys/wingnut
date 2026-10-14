@@ -6,6 +6,7 @@ import { useState } from "react";
 
 import { attachReceipt, createExpense } from "@/app/receipts/actions";
 import { FIELD } from "@/components/field";
+import { VendorField } from "@/components/vendor-field";
 import type { Category } from "@/lib/expenses";
 import { shrinkImage } from "@/lib/image";
 import { createClient } from "@/lib/supabase/browser";
@@ -29,11 +30,14 @@ export function ReceiptForm({
   categories,
   defaultDate,
   memberName,
+  vendors,
   flightId,
 }: {
   categories: Category[];
   defaultDate: string;
   memberName: string;
+  /** Where this member has bought before, most-used first. May be empty. */
+  vendors: string[];
   flightId?: string;
 }) {
   const router = useRouter();
@@ -160,16 +164,7 @@ export function ReceiptForm({
         </select>
       </label>
 
-      <label className="flex flex-col gap-1.5">
-        <span className="field-label">Bought from</span>
-        <input
-          name="vendor"
-          required
-          autoComplete="off"
-          placeholder="Esso Nanaimo"
-          className={FIELD}
-        />
-      </label>
+      <VendorField vendors={vendors} />
 
       <div className="flex gap-3">
         <label className="flex flex-1 flex-col gap-1.5">

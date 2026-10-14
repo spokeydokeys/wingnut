@@ -1,7 +1,7 @@
 import { BackHeader } from "@/components/back-header";
 import { ReceiptForm } from "@/components/receipt-form";
 import { requireMember } from "@/lib/dal";
-import { getCategories } from "@/lib/expenses";
+import { getCategories, getVendorSuggestions } from "@/lib/expenses";
 import { toDateInputValue } from "@/lib/time";
 
 // The date it defaults to is today where the aeroplane is, which moves.
@@ -19,7 +19,10 @@ export default async function NewReceipt({
   searchParams,
 }: PageProps<"/receipts/new">) {
   const member = await requireMember();
-  const categories = await getCategories();
+  const [categories, vendors] = await Promise.all([
+    getCategories(),
+    getVendorSuggestions(member.id),
+  ]);
 
   // Set when the Confirm-flight screen sends a pilot here after asking whether
   // they bought fuel, so the receipt lands attached to the flight it was for.
@@ -40,6 +43,7 @@ export default async function NewReceipt({
             categories={categories}
             defaultDate={toDateInputValue()}
             memberName={member.full_name}
+            vendors={vendors}
             flightId={typeof flight === "string" ? flight : undefined}
           />
         )}

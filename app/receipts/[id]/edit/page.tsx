@@ -4,9 +4,12 @@ import { updateExpense } from "@/app/receipts/actions";
 import { ActionForm } from "@/components/action-form";
 import { BackHeader } from "@/components/back-header";
 import { FIELD } from "@/components/field";
+import { VendorField } from "@/components/vendor-field";
+import { requireMember } from "@/lib/dal";
 import {
   getCategories,
   getExpense,
+  getVendorSuggestions,
   isMonthClosed,
   lockReason,
 } from "@/lib/expenses";
@@ -30,12 +33,14 @@ export default async function EditReceipt({
   params,
 }: PageProps<"/receipts/[id]/edit">) {
   const { id } = await params;
+  const member = await requireMember();
 
   const expense = await getExpense(id);
   if (!expense) notFound();
 
-  const [categories, monthClosed] = await Promise.all([
+  const [categories, vendors, monthClosed] = await Promise.all([
     getCategories(),
+    getVendorSuggestions(member.id),
     isMonthClosed(expense.company_id, expense.spent_on),
   ]);
 
@@ -54,16 +59,7 @@ export default async function EditReceipt({
         <ActionForm action={updateExpense} submitLabel="Save the receipt">
           <input type="hidden" name="id" value={expense.id} />
 
-          <label className="flex flex-col gap-1.5">
-            <span className="field-label">Bought from</span>
-            <input
-              name="vendor"
-              required
-              autoComplete="off"
-              defaultValue={expense.vendor}
-              className={FIELD}
-            />
-          </label>
+          <VendorField vendors={vendors} defaultValue={expense.vendor} />
 
           <div className="flex gap-3">
             <label className="flex flex-1 flex-col gap-1.5">
