@@ -3449,5 +3449,519 @@ begin
 end $$;
 rollback;
 
+-- ===========================================================================
+-- 48. Nobody approves the receipt that pays them. SPEC.md 4.7's approval step
+--     is the whole control over member-paid spending: an approved receipt
+--     becomes a credit against what that member owes, which is money out of
+--     the company by another route. "Any other owner" is the owner's own
+--     wording from 13 Oct 2026, chosen over "the other co-owner" because the
+--     roster is going to three or four.
+--
+--     The reviewer is stamped from the session for the same reason the task
+--     completer is: a crafted request would otherwise be able to name somebody
+--     else as the approver, and that name is the only evidence the control was
+--     observed at all.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_expense uuid;
+  v_ok      boolean;
+  v_rec     record;
+begin
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set auth_user_id = null;
+  alter table public.member enable trigger member_guard_privileged_columns;
+
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0011",
+      "email":"owner1@example.test"}', true);
+  perform public.claim_member_identity();
+
+  insert into public.expense (
+    company_id, aircraft_id, payer, paid_by_member_id, vendor, spent_on,
+    total_amount, gl_account_code, litres, status
+  ) values (
+    '00000000-0000-0000-0000-00000000c000',
+    '00000000-0000-0000-0000-0000000ac001',
+    'member', '00000000-0000-0000-0000-00000000a001',
+    'Esso Nanaimo', date '2026-10-04', 248.60, '5100', 134.40, 'submitted'
+  ) returning id into v_expense;
+
+  -- Owner One paid for the fuel, so Owner One cannot be the one who agrees it.
+  v_ok := false;
+  begin
+    update public.expense set status = 'approved', receipt_key = 'receipt/t/1.jpg'
+     where id = v_expense;
+  exception when others then v_ok := true;
+  end;
+  if not v_ok then
+    raise exception 'FAIL  an owner approved the receipt that pays them';
+  end if;
+
+  -- The other owner can, and cannot pass off the credit as self-approved or
+  -- back-date when it was agreed.
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0022",
+      "email":"owner2@example.test"}', true);
+  perform public.claim_member_identity();
+
+  update public.expense
+     set status = 'approved',
+         receipt_key = 'receipt/t/1.jpg',
+         reviewed_by = '00000000-0000-0000-0000-00000000a001',
+         reviewed_at = timestamptz '2020-01-01 00:00:00-08'
+   where id = v_expense;
+
+  select reviewed_by, reviewed_at into v_rec
+    from public.expense where id = v_expense;
+
+  if v_rec.reviewed_by is distinct from '00000000-0000-0000-0000-00000000a002' then
+    raise exception 'FAIL  the receipt records % as the approver', v_rec.reviewed_by;
+  end if;
+  if v_rec.reviewed_at < now() - interval '1 day' then
+    raise exception 'FAIL  the caller chose when the receipt was agreed: %',
+      v_rec.reviewed_at;
+  end if;
+
+  perform set_config('role', 'postgres', true);
+  raise notice 'PASS  a receipt is approved by somebody else, and the database says who';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 49. An approved receipt needs its picture, and keeps it. SPEC.md 4.7 wants
+--     the originals locked once approved, and the reason is that by then the
+--     image is the evidence behind a credit that has been agreed and may
+--     already be printed on an issued invoice.
+--
+--     Entering a receipt without a photo is allowed on purpose -- the fuel
+--     dock has no signal, and refusing the row would lose the amount as well
+--     as the image. The line is drawn at approval, not at entry.
+--
+--     The storage half of this lives in the bucket policies, which only the
+--     Storage API can exercise; what is checkable here is receipt_is_locked(),
+--     the predicate those policies are built out of.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_expense uuid;
+  v_ok      boolean;
+  v_key     text := 'receipt/00000000-0000-0000-0000-00000000c000/2026/10/t49.jpg';
+begin
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set auth_user_id = null;
+  alter table public.member enable trigger member_guard_privileged_columns;
+
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0022",
+      "email":"owner2@example.test"}', true);
+  perform public.claim_member_identity();
+
+  insert into public.expense (
+    company_id, aircraft_id, payer, paid_by_member_id, vendor, spent_on,
+    total_amount, gl_account_code, status
+  ) values (
+    '00000000-0000-0000-0000-00000000c000',
+    '00000000-0000-0000-0000-0000000ac001',
+    'member', '00000000-0000-0000-0000-00000000a001',
+    'Island Aero Supply', date '2026-10-09', 112.35, '5300', 'submitted'
+  ) returning id into v_expense;
+
+  if public.receipt_is_locked(v_key) then
+    raise exception 'VACUOUS  the key is locked before anything was approved';
+  end if;
+
+  v_ok := false;
+  begin
+    update public.expense set status = 'approved' where id = v_expense;
+  exception when others then v_ok := true;
+  end;
+  if not v_ok then
+    raise exception 'FAIL  a receipt was approved with no image attached';
+  end if;
+
+  update public.expense set receipt_key = v_key, status = 'approved'
+   where id = v_expense;
+
+  if not public.receipt_is_locked(v_key) then
+    raise exception 'FAIL  an approved receipt image is still replaceable';
+  end if;
+
+  -- The row is frozen too, so the image cannot be detached from the credit by
+  -- blanking the key and the amount cannot drift from the picture.
+  v_ok := false;
+  begin
+    update public.expense set receipt_key = null where id = v_expense;
+  exception when others then v_ok := true;
+  end;
+  if not v_ok then
+    raise exception 'FAIL  an approved receipt was separated from its image';
+  end if;
+
+  v_ok := false;
+  begin
+    update public.expense set total_amount = 1.00 where id = v_expense;
+  exception when others then v_ok := true;
+  end;
+  if not v_ok then
+    raise exception 'FAIL  an approved receipt was re-priced';
+  end if;
+
+  v_ok := false;
+  begin
+    delete from public.expense where id = v_expense;
+  exception when others then v_ok := true;
+  end;
+  if not v_ok then
+    raise exception 'FAIL  an approved receipt was deleted';
+  end if;
+
+  -- What may still move is the sync bookkeeping, or an approved receipt could
+  -- never be marked as having reached the GL.
+  update public.expense set external_ref = 'QBO-1', synced_at = now()
+   where id = v_expense;
+
+  perform set_config('role', 'postgres', true);
+  raise notice 'PASS  approval needs the image, and then freezes both';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 50. A receipt cannot be coded to a revenue account. Nothing in the ledger
+--     would complain: the amounts balance either way, and the mistake surfaces
+--     a year later at the first reconciliation, when fuel appears as income.
+--
+--     The (company_id, gl_account_code) foreign key is not enough on its own,
+--     because 4100 is a perfectly real account for this company. What is
+--     wrong is its TYPE, and only the trigger knows that.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_ok boolean := false;
+begin
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set auth_user_id = null;
+  alter table public.member enable trigger member_guard_privileged_columns;
+
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0011",
+      "email":"owner1@example.test"}', true);
+  perform public.claim_member_identity();
+
+  begin
+    insert into public.expense (
+      company_id, aircraft_id, payer, vendor, spent_on,
+      total_amount, gl_account_code, status
+    ) values (
+      '00000000-0000-0000-0000-00000000c000',
+      '00000000-0000-0000-0000-0000000ac001',
+      'company', 'Esso Nanaimo', date '2026-10-04', 248.60,
+      '4100', 'recorded'
+    );
+  exception when others then v_ok := true;
+  end;
+
+  if not v_ok then
+    raise exception 'FAIL  a fuel purchase was booked to flight revenue';
+  end if;
+
+  -- ... and the refusal is about the account's TYPE. The identical row coded
+  -- to 5100 goes in, so check 50 is not just re-proving that the expense
+  -- screen needs a session.
+  insert into public.expense (
+    company_id, aircraft_id, payer, vendor, spent_on,
+    total_amount, gl_account_code, status
+  ) values (
+    '00000000-0000-0000-0000-00000000c000',
+    '00000000-0000-0000-0000-0000000ac001',
+    'company', 'Esso Nanaimo', date '2026-10-04', 248.60,
+    '5100', 'recorded'
+  );
+
+  perform set_config('role', 'postgres', true);
+  raise notice 'PASS  spending cannot be coded to a revenue account';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 51. A company-card purchase is not somebody's reimbursement, so it has no
+--     approval path at all: the money has already left the company account and
+--     agreeing to it afterwards would change nothing. The owner asked on
+--     13 Oct 2026 that these stay visible to the other owner and editable, and
+--     chose month close as the point they set -- which is the same line the
+--     rest of the billing already draws.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_expense uuid;
+  v_ok      boolean;
+begin
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set auth_user_id = null;
+  alter table public.member enable trigger member_guard_privileged_columns;
+
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0022",
+      "email":"owner2@example.test"}', true);
+  perform public.claim_member_identity();
+
+  insert into public.expense (
+    company_id, aircraft_id, payer, vendor, spent_on,
+    total_amount, gl_account_code, status
+  ) values (
+    '00000000-0000-0000-0000-00000000c000',
+    '00000000-0000-0000-0000-0000000ac001',
+    'company', 'Harbour Air Parts', date '2026-10-06', 96.25, '5300',
+    'recorded'
+  ) returning id into v_expense;
+
+  v_ok := false;
+  begin
+    update public.expense set status = 'approved', receipt_key = 'receipt/t/51.jpg'
+     where id = v_expense;
+  exception when others then v_ok := true;
+  end;
+  if not v_ok then
+    raise exception 'FAIL  a company-card purchase went through approval';
+  end if;
+
+  -- It never becomes a credit either -- the company paid, so there is nobody
+  -- to reimburse.
+  if exists (
+    select 1 from public.month_charges(
+      '00000000-0000-0000-0000-0000000ac001',
+      '00000000-0000-0000-0000-00000000a002',
+      date '2026-10-01') c
+     where c.kind = 'expense_credit'
+       and c.description like '%Harbour Air Parts%'
+  ) then
+    raise exception 'FAIL  a company-card purchase was credited to an owner';
+  end if;
+
+  -- October is open, so a typo in the amount is still fixable.
+  update public.expense set total_amount = 97.00 where id = v_expense;
+
+  -- September is billed. Moving the purchase there puts it behind an invoice
+  -- somebody has already been sent, and it stops being anyone's to edit.
+  update public.expense set spent_on = date '2026-09-15' where id = v_expense;
+  if not public.month_is_closed('00000000-0000-0000-0000-00000000c000',
+                                date '2026-09-01') then
+    raise exception 'VACUOUS  September is not closed in the seed';
+  end if;
+
+  v_ok := false;
+  begin
+    update public.expense set total_amount = 98.00 where id = v_expense;
+  exception when others then v_ok := true;
+  end;
+  if not v_ok then
+    raise exception 'FAIL  a purchase inside a closed month was edited';
+  end if;
+
+  perform set_config('role', 'postgres', true);
+  raise notice 'PASS  a company-card purchase skips approval and freezes at month close';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 52. The credit is DERIVED from the approved receipt, not posted as a ledger
+--     row -- the same choice flights already make, and for the same reason: two
+--     sources for one amount means the first re-close doubles it.
+--
+--     What makes the derivation safe is that issue_invoice stamps invoice_id,
+--     and month_expense_ids only gathers receipts with none. Without that the
+--     same receipt would reappear as a credit every month forever.
+--
+--     The sweep is the other half. Approval needs the other owner, so a
+--     receipt bought on the 4th is routinely agreed in November. A filter on
+--     "approved during the month" would strand it between two issued invoices
+--     with no month that will ever pick it up; the rule is instead "approved by
+--     the end of the period, and not yet billed".
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_expense uuid;
+  v_amount  numeric;
+  v_gst     numeric;
+  v_rows    int;
+begin
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set auth_user_id = null;
+  alter table public.member enable trigger member_guard_privileged_columns;
+
+  perform set_config('role', 'authenticated', true);
+  -- Owner Two is in session throughout, because Owner One's receipt has to be
+  -- approved by somebody else (check 48) and the stamp takes the approver from
+  -- the session, not from the insert.
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0022",
+      "email":"owner2@example.test"}', true);
+  perform public.claim_member_identity();
+
+  insert into public.expense (
+    company_id, aircraft_id, payer, paid_by_member_id, vendor, spent_on,
+    total_amount, gl_account_code, litres, status, submitted_by,
+    receipt_key
+  ) values (
+    '00000000-0000-0000-0000-00000000c000',
+    '00000000-0000-0000-0000-0000000ac001',
+    'member', '00000000-0000-0000-0000-00000000a001',
+    'Esso Nanaimo', date '2026-10-04', 248.60, '5100', 134.40,
+    'approved', '00000000-0000-0000-0000-00000000a001',
+    'receipt/t/52.jpg'
+  ) returning id into v_expense;
+
+  select c.amount, c.gst_amount into v_amount, v_gst
+    from public.month_charges(
+      '00000000-0000-0000-0000-0000000ac001',
+      '00000000-0000-0000-0000-00000000a001',
+      date '2026-10-01') c
+   where c.kind = 'expense_credit'
+     and c.description like '%Esso Nanaimo%';
+
+  if v_amount is null then
+    raise exception 'FAIL  an approved receipt produced no credit in its month';
+  end if;
+  -- Whole, and the other way round from a charge: the member is owed this.
+  if v_amount + v_gst <> -248.60 then
+    raise exception 'FAIL  the credit is % + % gst, expected -248.60 in total',
+      v_amount, v_gst;
+  end if;
+
+  -- Bill the month. The receipt is now attached to that invoice.
+  perform public.close_month('00000000-0000-0000-0000-0000000ac001',
+                             date '2026-10-01');
+  perform set_config('role', 'postgres', true);
+  perform public.issue_invoice(i.id)
+     from public.invoice i
+    where i.company_id = '00000000-0000-0000-0000-00000000c000'
+      and i.period_month = date '2026-10-01'
+      and i.member_id = '00000000-0000-0000-0000-00000000a001';
+
+  if (select invoice_id from public.expense where id = v_expense) is null then
+    raise exception 'FAIL  an issued invoice left the receipt unbilled';
+  end if;
+
+  -- ... and so it does not come round again in November.
+  select count(*) into v_rows
+    from public.month_charges(
+      '00000000-0000-0000-0000-0000000ac001',
+      '00000000-0000-0000-0000-00000000a001',
+      date '2026-11-01') c
+   where c.kind = 'expense_credit'
+     and c.description like '%Esso Nanaimo%';
+  if v_rows <> 0 then
+    raise exception 'FAIL  a billed receipt was credited again the next month';
+  end if;
+
+  raise notice 'PASS  an approved receipt is credited once and then attached to its invoice';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 53. The late approval. This is check 52's sweep on its own, because it is
+--     the easy one to get wrong and the expensive one to discover.
+--
+--     A receipt is held up by exactly the control that makes it trustworthy:
+--     the other owner has to look at it, and they are not necessarily in the
+--     same month. Here a September purchase is agreed in October, after
+--     September has been billed. It must appear on the October bill -- the
+--     earliest one still open -- and not on September's, which has gone out,
+--     and above all not nowhere.
+--
+--     That is what makes month_expense_ids a sweep ("approved by the end of
+--     the period and not yet on an invoice") rather than a filter on the
+--     month the approval happened in.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_expense uuid;
+  v_amount  numeric;
+begin
+  alter table public.member disable trigger member_guard_privileged_columns;
+  update public.member set auth_user_id = null;
+  alter table public.member enable trigger member_guard_privileged_columns;
+
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0022",
+      "email":"owner2@example.test"}', true);
+  perform public.claim_member_identity();
+
+  if not public.month_is_closed('00000000-0000-0000-0000-00000000c000',
+                                date '2026-09-01') then
+    raise exception 'VACUOUS  September is not billed in the seed, so nothing is late';
+  end if;
+
+  -- Bought in September, agreed now, which is October.
+  insert into public.expense (
+    company_id, aircraft_id, payer, paid_by_member_id, vendor, spent_on,
+    total_amount, gl_account_code, status, submitted_by, receipt_key
+  ) values (
+    '00000000-0000-0000-0000-00000000c000',
+    '00000000-0000-0000-0000-0000000ac001',
+    'member', '00000000-0000-0000-0000-00000000a001',
+    'Nanaimo Hardware', date '2026-09-20', 41.15, '5300',
+    'approved', '00000000-0000-0000-0000-00000000a001', 'receipt/t/53.jpg'
+  ) returning id into v_expense;
+
+  if public.aircraft_date(
+       (select reviewed_at from public.expense where id = v_expense))
+     < date '2026-10-01' then
+    raise exception 'VACUOUS  the approval did not land in a later month than the purchase';
+  end if;
+
+  select c.amount into v_amount
+    from public.month_charges(
+      '00000000-0000-0000-0000-0000000ac001',
+      '00000000-0000-0000-0000-00000000a001',
+      date '2026-10-01') c
+   where c.kind = 'expense_credit'
+     and c.description like '%Nanaimo Hardware%';
+
+  if v_amount is null then
+    raise exception 'FAIL  a receipt agreed after its month was credited nowhere';
+  end if;
+
+  -- The description still says when the money was spent. Only the agreeing
+  -- was late, and an owner reading the bill needs to recognise the purchase.
+  if not exists (
+    select 1 from public.month_charges(
+      '00000000-0000-0000-0000-0000000ac001',
+      '00000000-0000-0000-0000-00000000a001',
+      date '2026-10-01') c
+     where c.kind = 'expense_credit'
+       and c.description like '%20 Sep%'
+  ) then
+    raise exception 'FAIL  the credit does not say when the money was spent';
+  end if;
+
+  -- And it is not retrofitted onto September, which has been invoiced.
+  if exists (
+    select 1 from public.month_charges(
+      '00000000-0000-0000-0000-0000000ac001',
+      '00000000-0000-0000-0000-00000000a001',
+      date '2026-09-01') c
+     where c.kind = 'expense_credit'
+       and c.description like '%Nanaimo Hardware%'
+  ) then
+    raise exception 'FAIL  a late receipt was added to a month already billed';
+  end if;
+
+  perform set_config('role', 'postgres', true);
+  raise notice 'PASS  a receipt agreed after its month lands on the earliest open bill';
+end $$;
+rollback;
+
 \echo ''
 \echo 'All core schema checks passed.'
