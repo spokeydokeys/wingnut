@@ -13,6 +13,8 @@ export type Snag = SnagRow & {
 };
 export type MaintenanceStatus =
   Database["public"]["Views"]["maintenance_status"]["Row"];
+export type MaintenanceItem =
+  Database["public"]["Tables"]["maintenance_item"]["Row"];
 export type TachReading = Database["public"]["Tables"]["tach_reading"]["Row"];
 export type AircraftNote = Database["public"]["Tables"]["aircraft_note"]["Row"] & {
   author: { full_name: string } | null;
@@ -123,6 +125,25 @@ export async function getMaintenanceItem(
   const supabase = await createClient();
   const { data } = await supabase
     .from("maintenance_status")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  return data ?? null;
+}
+
+/**
+ * The item as it is stored, for the admin screen that edits it.
+ *
+ * The status view is no good here: it is filtered to active items and its
+ * numbers are derived, and a form has to put back exactly what is in the
+ * table or saving it would quietly change something nobody touched.
+ */
+export async function getMaintenanceItemRow(
+  id: string,
+): Promise<MaintenanceItem | null> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("maintenance_item")
     .select("*")
     .eq("id", id)
     .maybeSingle();

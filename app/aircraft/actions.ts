@@ -302,3 +302,95 @@ export async function markMaintenanceDone(_prev: Failed | null, form: FormData):
   revalidatePath("/aircraft", "layout");
   redirect("/aircraft");
 }
+
+/**
+ * Corrects what an item is: its name, its interval, how much warning it gives
+ * and what the job is expected to cost.
+ *
+ * These numbers come off an airworthiness document, so until now they could
+ * only be changed in SQL -- which made the one screen that shows them read as
+ * though they were carved in. They are not: an interval changes at an annual, a
+ * life limit moves on a service bulletin, and an estimate written at handover
+ * is a guess somebody will want to correct.
+ *
+ * `maintenance_item_admin_write` is the rule, not a check written out here. RLS
+ * refuses a pilot by matching no rows rather than by raising, so the update
+ * asks for the id back and treats an empty result as the refusal it is.
+ *
+ * The basis is read from the row, never from the form: it decides which
+ * interval columns mean anything, and a request claiming the wrong one would
+ * write an interval the item can never come due on.
+ */
+export async function updateMaintenanceItem(
+  itemId: string,
+  _prev: Failed | null,
+  form: FormData,
+): Promise<Failed | never> {
+  await requireMember();
+
+  const name = String(form.get("name") ?? "").trim();
+  if (!name) return { error: "The item needs a name." };
+
+  const supabase = await createClient();
+  const { data: item } = await supabase
+    .from("maintenance_item")
+    .select("basis")
+    .eq("id", itemId)
+    .maybeSingle();
+  if (!item) return { error: "That maintenance item no longer exists." };
+
+  const patch: {
+    name: string;
+    est_cost: number | null;
+    interval_hours?: number;
+    lead_hours?: number | null;
+    interval_months?: number | null;
+    due_date?: string | null;
+    lead_days?: number | null;
+  } = {
+    name,
+    est_cost: readNumber(form.get("est_cost")),
+  };
+
+  if (item.basis === "tach") {
+    const hours = readNumber(form.get("interval_hours"));
+    if (hours === null || hours <= 0) {
+      return { error: "Say how many tach hours there are between jobs." };
+    }
+    patch.interval_hours = hours;
+    patch.lead_hours = readNumber(form.get("lead_hours"));
+  } else {
+    const months = readNumber(form.get("interval_months"));
+    const dueOn = String(form.get("due_date") ?? "");
+    const fixed = /^\d{4}-\d{2}-\d{2}$/.test(dueOn) ? dueOn : null;
+    if ((months === null || months <= 0) && fixed === null) {
+      return {
+        error: "A calendar item needs either a number of months or a fixed date.",
+      };
+    }
+    // Never both: the status view prefers the fixed date, so leaving an
+    // interval behind it would have the screen saying one thing and the
+    // countdown measuring another.
+    patch.interval_months = fixed === null ? Math.round(months as number) : null;
+    patch.due_date = fixed;
+    const lead = readNumber(form.get("lead_days"));
+    patch.lead_days = lead === null ? null : Math.round(lead);
+  }
+
+  const { data, error } = await supabase
+    .from("maintenance_item")
+    .update(patch)
+    .eq("id", itemId)
+    .select("id");
+
+  if (error) return { error: error.message };
+  if (!data || data.length === 0) {
+    return {
+      error:
+        "Only an admin can change what an item is. Ask one of them to make the change.",
+    };
+  }
+
+  revalidatePath("/aircraft", "layout");
+  redirect(`/aircraft/maintenance/${itemId}`);
+}

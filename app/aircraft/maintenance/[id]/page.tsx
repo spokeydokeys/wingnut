@@ -14,19 +14,19 @@ import { formatDate, formatDayMonth, toDateInputValue } from "@/lib/time";
 export const dynamic = "force-dynamic";
 
 /**
- * One maintenance item, and the only thing anyone does to one from the app:
- * record that it has been done (SPEC.md 4.4).
+ * One maintenance item, and the thing anybody does to one: record that it has
+ * been done (SPEC.md 4.4).
  *
- * Intervals and life limits are not editable here. They come off an
- * airworthiness document rather than off this screen, and
- * `maintenance_item_admin_write` says so -- a pilot who could shorten the
- * grease interval could also lengthen it.
+ * The intervals themselves are an admin's to change and live behind Edit, one
+ * screen away -- `maintenance_item_admin_write` is the rule, and a pilot who
+ * could shorten the grease interval could also lengthen it. Marking it done is
+ * the common act and stays here, in the open.
  */
 export default async function MaintenanceItem({
   params,
 }: PageProps<"/aircraft/maintenance/[id]">) {
   const { id } = await params;
-  await requireMember();
+  const member = await requireMember();
 
   const item = await getMaintenanceItem(id);
   if (!item) notFound();
@@ -63,6 +63,16 @@ export default async function MaintenanceItem({
             : item.interval_months
               ? `Every ${item.interval_months} months`
               : "A fixed calendar limit"
+        }
+        action={
+          member.role === "admin" ? (
+            <Link
+              href={`/aircraft/maintenance/${id}/edit`}
+              className="flex h-11 items-center rounded-[10px] border-[1.5px] border-ink bg-surface px-4 text-[15px] font-semibold"
+            >
+              Edit
+            </Link>
+          ) : undefined
         }
       />
 
