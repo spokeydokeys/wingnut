@@ -213,6 +213,13 @@ export type ConfirmInput = {
    * the field is how a pilot asks for the derived sentence back.
    */
   journeyText: string;
+  /**
+   * Whether the pilot ticked "I bought fuel on this flight". Asked here rather
+   * than offered as a link beside the Save button because tapping a link would
+   * throw away everything typed into this form; answered as a tick, it costs
+   * nothing and only changes where saving lands.
+   */
+  boughtFuel: boolean;
 };
 
 /**
@@ -275,5 +282,10 @@ export async function saveFlight(
   if (!data) return { error: "That flight is no longer a draft." };
 
   revalidatePath("/", "layout");
+
+  // Straight on to the camera while the pilot is still standing by the pump,
+  // with the flight named so the receipt files itself against it. SPEC.md 4.7
+  // makes the flight link optional, and this is the one moment it is free.
+  if (input.boughtFuel) redirect(`/receipts/new?flight=${data.id}`);
   redirect("/");
 }

@@ -56,6 +56,7 @@ export function ConfirmForm({
   const [tach, setTach] = useState(actualTachHours);
   const [note, setNote] = useState(notes);
   const [journey, setJourney] = useState(journeyText);
+  const [fuel, setFuel] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -77,6 +78,7 @@ export function ConfirmForm({
         actualTachHours: tach,
         notes: note,
         journeyText: journey,
+        boughtFuel: fuel,
       });
       // On success the action redirects and never returns, so anything here is
       // a refusal worth putting in front of the pilot.
@@ -219,6 +221,29 @@ export function ConfirmForm({
         />
       </div>
 
+      {/*
+        Asked here, at the one moment the pilot is certain of the answer and
+        the receipt is still in their hand. A tick rather than a link: a link
+        would leave this form and lose everything typed into it, and the
+        reimbursement is only lost by having to go looking for the screen.
+      */}
+      <label className="flex items-center gap-3 rounded-xl border border-line bg-surface px-3.5 py-3">
+        <input
+          type="checkbox"
+          checked={fuel}
+          onChange={(event) => setFuel(event.target.checked)}
+          className="size-5 flex-none accent-accent"
+        />
+        <span>
+          <span className="block text-[15px] font-medium">
+            Bought fuel on this flight?
+          </span>
+          <span className="block text-[13px] text-muted">
+            Saving takes you to the camera, with this flight already named.
+          </span>
+        </span>
+      </label>
+
       {error && (
         <p
           role="alert"
@@ -236,7 +261,11 @@ export function ConfirmForm({
         disabled={pending || !valid}
         className="flex h-14 items-center justify-center rounded-[14px] bg-accent text-lg font-semibold text-white disabled:opacity-60"
       >
-        {pending ? "Saving…" : "Save flight"}
+        {pending
+          ? "Saving…"
+          : fuel
+            ? "Save and add the receipt"
+            : "Save flight"}
       </button>
 
       <form action={cancelFlight.bind(null, flightId)} className="flex justify-center">
