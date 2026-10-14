@@ -77,6 +77,32 @@ export function formatDate(isoDate: string): string {
   }).format(new Date(Date.UTC(y, mo - 1, d)));
 }
 
+/**
+ * `Mon 19 Oct` from a plain `YYYY-MM-DD`, for a calendar heading.
+ *
+ * formatDayShort says the same thing about an instant. This one is for the
+ * days a calendar is built out of, which are dates and have no time zone; see
+ * formatDate above for why reading one as an instant moves it.
+ */
+export function formatCalendarDay(isoDate: string): string {
+  const [y, mo, d] = isoDate.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC",
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  }).format(new Date(Date.UTC(y, mo - 1, d)));
+}
+
+/** `M` -- the column heading of a month grid, derived rather than hardcoded. */
+export function formatWeekdayNarrow(isoDate: string): string {
+  const [y, mo, d] = isoDate.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC",
+    weekday: "narrow",
+  }).format(new Date(Date.UTC(y, mo - 1, d)));
+}
+
 /** `2026-11-22`, for the value of an `<input type="date">`. */
 export function toDateInputValue(at: Date = new Date()): string {
   const p = parts(at);

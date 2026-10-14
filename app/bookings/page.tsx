@@ -2,35 +2,56 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { BackHeader } from "@/components/back-header";
-import { groupByDay, getUpcomingBookings } from "@/lib/bookings";
+import { BookingFortnight } from "@/components/booking-fortnight";
+import { BookingMonth } from "@/components/booking-month";
+import { BookingRow } from "@/components/booking-row";
+import {
+  BookingViewSwitcher,
+  type BookingView,
+} from "@/components/booking-view-switcher";
+import {
+  addDays,
+  bookingsByDate,
+  getBookingsBetween,
+  getUpcomingBookings,
+  groupByDay,
+  monthGrid,
+} from "@/lib/bookings";
 import { requireMember } from "@/lib/dal";
 import { getAircraft } from "@/lib/flights";
-import { formatClock, formatDayShort } from "@/lib/time";
+import { formatCalendarDay, toDateInputValue } from "@/lib/time";
 
-// "Still to come" is measured against the clock, which moves on its own.
+// Every view is anchored to today, which moves on its own.
 export const dynamic = "force-dynamic";
 
+const FORTNIGHT = 14;
+
 /**
- * The calendar, as an agenda: the next however-many days, each with who has
- * the aeroplane and why.
+ * The calendar, in whichever of its three shapes was asked for.
  *
  * SPEC.md 4.5 asks for a calendar with the other pilot's bookings visible, and
- * for two or three owners this list is the most honest shape for it -- a month
- * grid of mostly empty squares answers "what is the 19th" when the question
- * anybody actually opens this with is "when can I have it next". The fortnight
- * and month grids are the other two views, and they read the same rows.
+ * the three views are three questions, not three decorations:
  *
- * Every booking is a link, including the other owner's: tapping it is how you
- * see the whole note, and giving a slot up lives on that screen rather than
- * under a thumb scrolling this one.
+ *   agenda     what is booked, soonest first -- the usual one
+ *   fortnight  when could I go, free days and all
+ *   month      which weekend in March, and is anyone on it
+ *
+ * All three read the same rows and all three send you to the same booking
+ * screen. The view lives in the URL so the calendar can be sent, reloaded, and
+ * come back to from a booking without snapping to a shape nobody chose.
  */
-export default async function Bookings() {
+export default async function Bookings({ searchParams }: PageProps<"/bookings">) {
   const member = await requireMember();
 
   const aircraft = await getAircraft();
   if (!aircraft) redirect("/no-access");
 
-  const days = groupByDay(await getUpcomingBookings(aircraft.id));
+  const query = await searchParams;
+  const asked = String(query.view ?? "");
+  const view: BookingView =
+    asked === "fortnight" || asked === "month" ? asked : "agenda";
+
+  const today = toDateInputValue();
 
   return (
     <>
@@ -49,52 +70,120 @@ export default async function Bookings() {
       />
 
       <main className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 pt-3.5 pb-4">
-        {days.length === 0 ? (
-          <p className="flex-none rounded-[14px] border border-line bg-surface px-3.5 py-3 text-[15px] text-muted">
-            Nothing booked. The aeroplane is free as far ahead as this list
-            looks.
-          </p>
-        ) : (
-          days.map((day) => (
-            <div key={day.date} className="flex-none">
-              <h2 className="field-label mb-1.5 px-0.5">
-                {day.label === null
-                  ? formatDayShort(day.bookings[0].start_at)
-                  : day.label}
-              </h2>
-              <div className="divide-y divide-hairline rounded-[14px] border border-line bg-surface px-3.5">
-                {day.bookings.map((booking) => {
-                  const mine = booking.pilot_member_id === member.id;
-                  return (
-                    <Link
-                      key={booking.id}
-                      href={`/bookings/${booking.id}`}
-                      className="flex items-baseline gap-3 py-3"
-                    >
-                      <span className="numeric w-[104px] flex-none text-[15px]">
-                        {formatClock(booking.start_at)}–
-                        {formatClock(booking.end_at)}
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block truncate text-[15px] font-medium">
-                          {mine
-                            ? "You"
-                            : (booking.pilot?.full_name ?? "A former owner")}
-                        </span>
-                        {booking.note && (
-                          <span className="block truncate text-[13px] text-muted">
-                            {booking.note}
-                          </span>
-                        )}
-                      </span>
-                    </Link>
-                  );
-                })}
-              </div>
-            </div>
-          ))
+        <BookingViewSwitcher current={view} />
+
+        {view === "agenda" && (
+          <Agenda aircraftId={aircraft.id} memberId={member.id} />
+        )}
+        {view === "fortnight" && (
+          <Fortnight aircraftId={aircraft.id} memberId={member.id} today={today} />
+        )}
+        {view === "month" && (
+          <Month
+            aircraftId={aircraft.id}
+            memberId={member.id}
+            today={today}
+            month={String(query.month ?? "").match(/^\d{4}-\d{2}$/)?.[0] ?? today.slice(0, 7)}
+            day={String(query.day ?? "").match(/^\d{4}-\d{2}-\d{2}$/)?.[0] ?? null}
+          />
         )}
       </main>
     </>
+  );
+}
+
+/** What is booked, soonest first, grouped into the days it falls on. */
+async function Agenda({
+  aircraftId,
+  memberId,
+}: {
+  aircraftId: string;
+  memberId: string;
+}) {
+  const days = groupByDay(await getUpcomingBookings(aircraftId));
+
+  if (days.length === 0) {
+    return (
+      <p className="flex-none rounded-[14px] border border-line bg-surface px-3.5 py-3 text-[15px] text-muted">
+        Nothing booked. The aeroplane is free as far ahead as this list looks.
+      </p>
+    );
+  }
+
+  return days.map((day) => (
+    <div key={day.date} className="flex-none">
+      <h2 className="field-label mb-1.5 px-0.5">
+        {day.label ?? formatCalendarDay(day.date)}
+      </h2>
+      <div className="divide-y divide-hairline rounded-[14px] border border-line bg-surface px-3.5">
+        {day.bookings.map((booking) => (
+          <BookingRow key={booking.id} booking={booking} memberId={memberId} />
+        ))}
+      </div>
+    </div>
+  ));
+}
+
+/** The next fourteen days, free ones included. */
+async function Fortnight({
+  aircraftId,
+  memberId,
+  today,
+}: {
+  aircraftId: string;
+  memberId: string;
+  today: string;
+}) {
+  const end = addDays(today, FORTNIGHT);
+  const byDate = bookingsByDate(await getBookingsBetween(aircraftId, today, end));
+
+  const days = Array.from({ length: FORTNIGHT }, (_, offset) => {
+    const date = addDays(today, offset);
+    return {
+      date,
+      label: offset === 0 ? "Today" : offset === 1 ? "Tomorrow" : null,
+      bookings: byDate.get(date) ?? [],
+    };
+  });
+
+  return <BookingFortnight days={days} memberId={memberId} />;
+}
+
+/** A month of squares, and the day picked out of it. */
+async function Month({
+  aircraftId,
+  memberId,
+  today,
+  month,
+  day,
+}: {
+  aircraftId: string;
+  memberId: string;
+  today: string;
+  month: string;
+  day: string | null;
+}) {
+  const weeks = monthGrid(month);
+  const cells = weeks.flat();
+
+  // The grid's own range, not the month's: the squares either side belong to
+  // the weeks on show and their bookings have to be read too.
+  const byDate = bookingsByDate(
+    await getBookingsBetween(aircraftId, cells[0], addDays(cells[cells.length - 1], 1)),
+  );
+
+  // Today, when it is on screen, so the view opens on something rather than on
+  // a grid with nothing chosen.
+  const selected = day ?? (today.startsWith(month) ? today : null);
+
+  return (
+    <BookingMonth
+      month={month}
+      weeks={weeks}
+      bookings={byDate}
+      selected={selected}
+      today={today}
+      memberId={memberId}
+    />
   );
 }
