@@ -218,6 +218,35 @@ export function defaultSlot(): { start: string; end: string } {
   };
 }
 
+/**
+ * The one booking worth a card on Home: your own next slot, or failing that
+ * whoever has the aeroplane next.
+ *
+ * Your own first because Home is the screen you open to fly, and "Saturday,
+ * 09:00" is the answer you came for. Falling back to somebody else's is not a
+ * consolation prize -- "the other owner has it Saturday" is exactly as useful,
+ * and it is the only way the card tells you the aeroplane is spoken for.
+ *
+ * A dozen rows is plenty to find your own in. Past that the card names whoever
+ * is next instead, which is still true, and the calendar is one tap away.
+ */
+export async function getNextBooking(
+  aircraftId: string,
+  memberId: string,
+): Promise<Booking | null> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("booking")
+    .select(BOOKING_SELECT)
+    .eq("aircraft_id", aircraftId)
+    .gte("end_at", new Date().toISOString())
+    .order("start_at")
+    .limit(12);
+
+  const rows = (data as Booking[] | null) ?? [];
+  return rows.find((row) => row.pilot_member_id === memberId) ?? rows[0] ?? null;
+}
+
 export async function getBooking(id: string): Promise<Booking | null> {
   const supabase = await createClient();
   const { data } = await supabase
