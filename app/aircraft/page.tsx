@@ -152,17 +152,21 @@ export default async function Aircraft() {
               <NoteRow key={note.id} note={note} />
             ))}
 
-            {noteCount > notes.length && (
-              <Link
-                href="/aircraft/log"
-                className="flex min-h-11 items-center justify-between py-3 text-[15px] font-semibold text-accent"
-              >
-                See the whole log
-                <span className="text-muted">
-                  {noteCount - notes.length} older
-                </span>
-              </Link>
-            )}
+            {/*
+              Always here, not only once something is hidden. A way in that
+              appears at note six is one nobody finds, and until then the log
+              screen may as well not exist -- so the row is the permanent door
+              and the count on the right is the only part that varies.
+            */}
+            <Link
+              href="/aircraft/log"
+              className="flex min-h-11 items-center justify-between py-3 text-[15px] font-semibold text-accent"
+            >
+              See the whole log
+              {noteCount > notes.length && (
+                <span className="text-muted">{noteCount - notes.length} older</span>
+              )}
+            </Link>
           </div>
         )}
       </main>
