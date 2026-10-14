@@ -215,6 +215,41 @@ export async function attachReceipt(
   return null;
 }
 
+/**
+ * Where this receipt's photo belongs, for a browser about to upload one.
+ *
+ * The same three steps as entry, one step short: the row already exists, so
+ * there is nothing to insert and the browser only needs to be told the key.
+ * This is the path back for a receipt whose upload failed at the dock, and for
+ * retaking a blurry one -- the key is derived from the expense id, so a retake
+ * overwrites rather than accumulates.
+ *
+ * Still derived here and still from the row, for the reason in this file's
+ * header. What the client learns is where its OWN photo goes, which RLS has
+ * already decided it may know: if the select finds no row, the member cannot
+ * see that receipt and gets a key for nothing.
+ */
+export async function plannedReceiptKey(
+  expenseId: string,
+  contentType: string,
+): Promise<{ objectKey: string } | Failed> {
+  await requireMember();
+
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("expense")
+    .select("id, company_id, spent_on")
+    .eq("id", expenseId)
+    .maybeSingle();
+  if (!data) return { error: "That receipt could not be found." };
+
+  try {
+    return { objectKey: keyFor(data, contentType) };
+  } catch {
+    return { error: "A receipt has to be a photo." };
+  }
+}
+
 function keyFor(
   row: { id: string; company_id: string; spent_on: string },
   contentType: string,
@@ -295,10 +330,17 @@ export async function rejectExpense(
  * hides the form in both cases, but the guard is what makes it true.
  */
 export async function updateExpense(
-  expenseId: string,
+  _prev: Failed | null,
   form: FormData,
 ): Promise<Failed | never> {
   await requireMember();
+
+  // From a hidden field rather than a bound argument, so the fields can be
+  // rendered on the server and the form stays an ActionForm. Which receipt it
+  // is being trusted from the client is safe: RLS decides which rows this
+  // member can update at all, and the guards decide whether this one still
+  // may be.
+  const expenseId = String(form.get("id") ?? "");
 
   const vendor = String(form.get("vendor") ?? "").trim();
   if (vendor === "") return { error: "Say who it was bought from." };
