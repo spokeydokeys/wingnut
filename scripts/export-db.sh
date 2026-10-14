@@ -47,8 +47,15 @@ run_pg() {
 echo "Exporting to exports/$stamp"
 
 echo "  - public schema and data"
+# --extension=btree_gist because --schema=public alone does NOT carry it:
+# extensions are database-scoped, so schema filtering drops them, and the
+# restore then fails on booking_no_overlap with "data type uuid has no default
+# operator class for access method gist". Naming it here rather than adding it
+# to the self-host shim keeps the dump self-contained -- the export has to
+# stand on its own in front of a DBA who was handed it and nothing else.
 run_pg pg_dump "$DB_URL" \
   --schema=public \
+  --extension=btree_gist \
   --no-owner \
   --no-privileges \
   --quote-all-identifiers \

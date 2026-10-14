@@ -71,6 +71,32 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"booking": {
+                  Row: {
+                    "aircraft_id": string,"created_at": string,"end_at": string,"id": string,"note": string | null,"pilot_member_id": string,"start_at": string,"updated_at": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "aircraft_id": string,"created_at"?: string,"end_at": string,"id"?: string,"note"?: string | null,"pilot_member_id": string,"start_at": string,"updated_at"?: string
+                  }
+                  Update: {
+                    "aircraft_id"?: string,"created_at"?: string,"end_at"?: string,"id"?: string,"note"?: string | null,"pilot_member_id"?: string,"start_at"?: string,"updated_at"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "booking_aircraft_id_fkey"
+      columns: ["aircraft_id"]
+isOneToOne: false
+      referencedRelation: "aircraft"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "booking_pilot_member_id_fkey"
+      columns: ["pilot_member_id"]
+isOneToOne: false
+      referencedRelation: "member"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"company": {
                   Row: {
                     "ar_account_code": string | null,"bank_account_code": string | null,"created_at": string,"etransfer_recipient": string | null,"fiscal_year_end_month": number,"gst_number": string | null,"gst_rate": number,"gst_registered": boolean,"id": string,"legal_name": string,"updated_at": string

@@ -87,11 +87,11 @@ begin
                       'invoice','invoice_counter','ledger_entry',
                       'place','flight','flight_fix','api_token',
                       'snag','tach_reading','maintenance_item','maintenance_event',
-                      'task','task_series','expense');
-  if v_tables <> 24 then
-    raise exception 'FAIL  expected 24 core tables, found %', v_tables;
+                      'aircraft_note','task','task_series','expense','booking');
+  if v_tables <> 26 then
+    raise exception 'FAIL  expected 26 core tables, found %', v_tables;
   end if;
-  raise notice 'PASS  all 24 core tables restored';
+  raise notice 'PASS  all 26 core tables restored';
 
   -- Assert the security-meaningful property rather than a magic total: no core
   -- table may come back without RLS enabled and at least one policy. A dump
@@ -109,7 +109,7 @@ begin
                         'invoice','ledger_entry',
                         'place','flight','flight_fix','api_token',
                         'snag','tach_reading','maintenance_item','maintenance_event',
-                        'task','task_series','expense')
+                        'aircraft_note','task','task_series','expense','booking')
     and (
       not t.rowsecurity
       or not exists (
@@ -1406,6 +1406,76 @@ begin
   delete from public.flight where id = v_flight;
 
   raise notice 'PASS  a log note moves the tach and lets go of it again on vanilla Postgres';
+end $$;
+SQL
+
+# The one thing in the schema that depends on an extension, so the one most
+# likely to be lost in a move. --schema=public does NOT carry btree_gist on its
+# own: without --extension in export-db.sh the restore dies on this constraint
+# with "data type uuid has no default operator class for access method gist",
+# and a restore that got no further would at least be loud. The quieter failure
+# this section is really here for is a dump that rebuilt the TABLE but dropped
+# the CONSTRAINT -- the calendar would restore looking perfect and silently
+# start accepting double-bookings.
+echo "==> Checking the booking calendar"
+psql_in <<'SQL'
+do $$
+declare
+  v_air     uuid;
+  v_one     uuid;
+  v_two     uuid;
+  v_day     date;
+  v_blocked text;
+  v_count   int;
+begin
+  select a.id into v_air from public.aircraft a limit 1;
+  select m.id into v_one from public.member m where m.is_active order by m.full_name limit 1;
+  select m.id into v_two from public.member m
+   where m.is_active and m.id <> v_one order by m.full_name limit 1;
+  if v_two is null then
+    raise exception 'FAIL  VACUOUS: one owner cannot double-book anybody';
+  end if;
+
+  -- Far enough out that the seeded bookings cannot be what is being measured.
+  v_day := public.aircraft_today() + 300;
+
+  insert into public.booking (aircraft_id, pilot_member_id, start_at, end_at)
+  values (v_air, v_one,
+          (v_day + time '09:00') at time zone 'America/Vancouver',
+          (v_day + time '12:00') at time zone 'America/Vancouver');
+
+  -- A handover at noon is NOT a clash. Asserting this before the refusal
+  -- matters: a constraint built with a closed range would still refuse the
+  -- overlap below, so the refusal alone cannot tell the two apart -- and the
+  -- version that forbids this is the one owners would notice first.
+  insert into public.booking (aircraft_id, pilot_member_id, start_at, end_at)
+  values (v_air, v_two,
+          (v_day + time '12:00') at time zone 'America/Vancouver',
+          (v_day + time '17:00') at time zone 'America/Vancouver');
+
+  -- And one minute into somebody else's slot is.
+  begin
+    insert into public.booking (aircraft_id, pilot_member_id, start_at, end_at)
+    values (v_air, v_two,
+            (v_day + time '11:59') at time zone 'America/Vancouver',
+            (v_day + time '13:00') at time zone 'America/Vancouver');
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  the restored calendar accepted a double-booking';
+  end if;
+
+  select count(*) into v_count from public.booking
+   where aircraft_id = v_air and public.aircraft_date(start_at) = v_day;
+  if v_count <> 2 then
+    raise exception 'FAIL  expected 2 bookings that day after restore, found %', v_count;
+  end if;
+
+  delete from public.booking
+   where aircraft_id = v_air and public.aircraft_date(start_at) = v_day;
+
+  raise notice 'PASS  the aeroplane cannot be in two places at once on vanilla Postgres';
 end $$;
 SQL
 

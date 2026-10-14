@@ -293,6 +293,40 @@ insert into public.aircraft_note (aircraft_id, body, noted_on, noted_by) values
    date '2026-09-28', '00000000-0000-0000-0000-00000000a002');
 
 -- ---------------------------------------------------------------------------
+-- Sample bookings
+--
+-- TODO(seed) DELETE these rows. They exist so the calendar has something to lay
+-- out in local development, in all three of its views.
+--
+-- Dated RELATIVE to today rather than written as literals, because a calendar
+-- seeded with fixed dates shows an empty "upcoming" the week after it is
+-- written, and the first thing anyone would do about that is assume the screen
+-- was broken. Stamped in the aeroplane's zone, never as a bare date.
+--
+-- The Saturday pair deliberately butt up against each other at noon: that is
+-- the case booking_no_overlap must ALLOW, and a seed that never exercised it
+-- would make a half-open range look the same as a closed one.
+-- ---------------------------------------------------------------------------
+
+insert into public.booking (aircraft_id, pilot_member_id, start_at, end_at, note)
+select
+  '00000000-0000-0000-0000-0000000ac001',
+  pilot,
+  (public.aircraft_today() + day_offset + start_time) at time zone 'America/Vancouver',
+  (public.aircraft_today() + day_offset + end_time) at time zone 'America/Vancouver',
+  note
+from (values
+  ('00000000-0000-0000-0000-00000000a001'::uuid, 2, time '09:00', time '12:30',
+   'Ganges for lunch, back mid afternoon.'),
+  ('00000000-0000-0000-0000-00000000a002'::uuid, 5, time '08:00', time '12:00',
+   'Running the dog up to Campbell River.'),
+  ('00000000-0000-0000-0000-00000000a001'::uuid, 5, time '12:00', time '17:00',
+   'Taking the handover at noon -- circuits, then home.'),
+  ('00000000-0000-0000-0000-00000000a002'::uuid, 12, time '10:00', time '16:00',
+   null)
+) as s(pilot, day_offset, start_time, end_time, note);
+
+-- ---------------------------------------------------------------------------
 -- Flights, and the September close
 --
 -- TODO(seed) DELETE everything below. It is invented, and exists so the Bills
