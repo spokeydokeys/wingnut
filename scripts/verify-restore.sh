@@ -87,11 +87,11 @@ begin
                       'invoice','invoice_counter','ledger_entry',
                       'place','flight','flight_fix','api_token',
                       'snag','tach_reading','maintenance_item','maintenance_event',
-                      'task','task_series');
-  if v_tables <> 23 then
-    raise exception 'FAIL  expected 23 core tables, found %', v_tables;
+                      'task','task_series','expense');
+  if v_tables <> 24 then
+    raise exception 'FAIL  expected 24 core tables, found %', v_tables;
   end if;
-  raise notice 'PASS  all 23 core tables restored';
+  raise notice 'PASS  all 24 core tables restored';
 
   -- Assert the security-meaningful property rather than a magic total: no core
   -- table may come back without RLS enabled and at least one policy. A dump
@@ -109,7 +109,7 @@ begin
                         'invoice','ledger_entry',
                         'place','flight','flight_fix','api_token',
                         'snag','tach_reading','maintenance_item','maintenance_event',
-                        'task','task_series')
+                        'task','task_series','expense')
     and (
       not t.rowsecurity
       or not exists (
@@ -1091,6 +1091,227 @@ begin
   end if;
 
   raise notice 'PASS  closing a month creates its reconcile chore exactly once, on vanilla Postgres';
+end $$;
+SQL
+
+# Receipts are the one phase with a foot outside Postgres, so this is where the
+# line between the two halves gets tested.
+#
+# The IMAGES are in Supabase Storage, and nothing about that travels in this
+# dump -- the bucket and its policies live in the `storage` schema, which
+# export-db.sh does not take. That is the design, not an omission: the images
+# come out as a directory of files alongside the dump, and lib/storage.ts is
+# rewritten to address wherever they land.
+#
+# Everything that decides what a receipt MEANS is in `public`, so it is in the
+# dump and it has to work here: who may agree to one, that it cannot be agreed
+# without its picture, that agreeing freezes it, and that agreeing is what turns
+# it into money off that member's bill. Including receipt_is_locked(), which the
+# bucket policies call -- the policies do not travel, but the predicate they are
+# built out of does, and a self-hosted store needs it just the same.
+echo "==> Checking receipts and approvals"
+psql_in <<'SQL'
+do $$
+declare
+  v_company  uuid;
+  v_air      uuid;
+  v_admin    uuid := '00000000-0000-0000-0000-0000000a00fa';
+  v_pilot    uuid := '00000000-0000-0000-0000-0000000a00f0';
+  v_account  text;
+  v_expense  uuid;
+  v_month    date;
+  v_spent    date;
+  v_key      text;
+  v_amount   numeric;
+  v_gst      numeric;
+  v_invoice  uuid;
+  v_count    int;
+  v_blocked  text;
+  v_reviewer uuid;
+begin
+  select c.id into v_company from public.company c limit 1;
+  select a.id into v_air from public.aircraft a limit 1;
+
+  -- An expense account for this company, read off the restored chart rather
+  -- than named: which codes a company uses is its own business, and the point
+  -- being made here is that the TYPE is what the schema cares about.
+  select g.code into v_account from public.gl_account g
+   where g.company_id = v_company and g.type = 'expense' order by g.code limit 1;
+  if v_account is null then
+    raise exception 'FAIL  the restored chart of accounts has nothing to spend on';
+  end if;
+
+  -- The fuel was bought three months ago; the bill it has to land on is the
+  -- current month, because that is the first one still open when the other
+  -- owner finally gets round to agreeing it. Both derived, because a literal
+  -- month here would expire.
+  v_spent := date_trunc('month', public.aircraft_today() - interval '3 months')::date + 12;
+  v_month := date_trunc('month', public.aircraft_today())::date;
+  if public.month_is_closed(v_company, v_month) then
+    raise exception 'FAIL  % is already billed, so nothing here can be tested', v_month;
+  end if;
+
+  -- ---------------------------------------------------------------------
+  -- Who may agree to it
+  -- ---------------------------------------------------------------------
+
+  -- The pilot is in session and the pilot is the one being reimbursed, which
+  -- is the case the whole approval step exists for.
+  perform set_config('request.jwt.claims',
+    json_build_object(
+      'sub',   (select m.auth_user_id from public.member m where m.id = v_pilot),
+      'email', 'restore-pilot@example.invalid')::text, true);
+  if public.current_member_id() is distinct from v_pilot then
+    raise exception 'FAIL  the restore pilot could not be resolved for receipts';
+  end if;
+
+  v_key := 'receipt/' || v_company || '/1999/01/' || gen_random_uuid() || '.jpg';
+
+  insert into public.expense (
+    company_id, aircraft_id, payer, paid_by_member_id, vendor, spent_on,
+    total_amount, gl_account_code, litres, status
+  ) values (
+    v_company, v_air, 'member', v_pilot, 'Restore Fuel Dock', v_spent,
+    120.00, v_account, 60.00, 'submitted'
+  ) returning id into v_expense;
+
+  if public.receipt_is_locked(v_key) then
+    raise exception 'FAIL  a key with nothing approved against it restored locked';
+  end if;
+
+  begin
+    update public.expense set status = 'approved', receipt_key = v_key
+     where id = v_expense;
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  a restored owner approved the receipt that pays them';
+  end if;
+
+  -- Somebody else, and only with the picture.
+  perform set_config('request.jwt.claims',
+    json_build_object(
+      'sub',   (select m.auth_user_id from public.member m where m.id = v_admin),
+      'email', 'restore-admin@example.invalid')::text, true);
+  if public.current_member_id() is distinct from v_admin then
+    raise exception 'FAIL  the restore admin could not be resolved for receipts';
+  end if;
+
+  begin
+    update public.expense set status = 'approved' where id = v_expense;
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  a restored receipt was agreed with no image attached';
+  end if;
+
+  update public.expense set receipt_key = v_key, status = 'approved'
+   where id = v_expense;
+
+  select e.reviewed_by into v_reviewer from public.expense e where e.id = v_expense;
+  if v_reviewer is distinct from v_admin then
+    raise exception 'FAIL  the restored receipt records % as the approver', v_reviewer;
+  end if;
+
+  if not public.receipt_is_locked(v_key) then
+    raise exception 'FAIL  an approved receipt image restored still replaceable';
+  end if;
+
+  begin
+    update public.expense set total_amount = 1.00 where id = v_expense;
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  an approved receipt was re-priced after restore';
+  end if;
+
+  raise notice 'PASS  a receipt needs somebody else and its picture, then freezes, on vanilla Postgres';
+
+  -- ---------------------------------------------------------------------
+  -- What agreeing to it does to the bill
+  -- ---------------------------------------------------------------------
+
+  -- Note what has just happened to the dates: the fuel was bought three months
+  -- ago and agreed a moment ago. A restore that brought across a narrower rule
+  -- -- "receipts bought during the month" -- would strand this one behind a
+  -- bill that has already gone out, which is the failure nobody notices until
+  -- an owner says they were never paid back.
+  select c.amount, c.gst_amount into v_amount, v_gst
+    from public.month_charges(v_air, v_pilot, v_month) c
+   where c.kind = 'expense_credit'
+     and c.description like '%Restore Fuel Dock%';
+
+  if v_amount is null then
+    raise exception 'FAIL  an approved receipt produced no credit after restore';
+  end if;
+  -- Whole, and the opposite sign from a charge: the member is owed it.
+  if v_amount + v_gst <> -120.00 then
+    raise exception 'FAIL  the restored credit is % + % gst, not -120.00 in total',
+      v_amount, v_gst;
+  end if;
+
+  -- ... and it is not also sitting on the month it was bought in, which nobody
+  -- had agreed it in yet.
+  if exists (
+    select 1 from public.month_charges(
+      v_air, v_pilot, date_trunc('month', v_spent)::date) c
+     where c.kind = 'expense_credit'
+       and c.description like '%Restore Fuel Dock%'
+  ) then
+    raise exception 'FAIL  the credit was backdated to % after restore',
+      date_trunc('month', v_spent)::date;
+  end if;
+
+  -- Bill it.
+  v_count := public.close_month(v_air, v_month);
+  if v_count = 0 then
+    raise exception 'FAIL  a month containing only a receipt credit built no drafts';
+  end if;
+
+  select i.id into v_invoice from public.invoice i
+   where i.member_id = v_pilot and i.period_month = v_month;
+  if v_invoice is null then
+    raise exception 'FAIL  the member who bought the fuel got no draft after restore';
+  end if;
+  -- The credit is ON that invoice, as its own line. Not asserted against the
+  -- invoice total, which also carries whatever this pilot flew: a figure like
+  -- that is really an assertion about the fixture and breaks the next time the
+  -- fixture gains a flight.
+  select coalesce(sum(l.amount + l.gst_amount), 0) into v_amount
+    from public.ledger_entry l
+   where l.invoice_id = v_invoice and l.kind = 'expense_credit';
+  if v_amount <> -120.00 then
+    raise exception 'FAIL  the invoice carries % of receipt credit, not -120.00',
+      v_amount;
+  end if;
+
+  perform public.issue_invoice(v_invoice);
+
+  -- The lock, the same one flights get: the receipt that was priced is now on
+  -- the invoice that priced it, so next month cannot credit it again.
+  if (select e.invoice_id from public.expense e where e.id = v_expense)
+     is distinct from v_invoice then
+    raise exception 'FAIL  issuing left the restored receipt unattached';
+  end if;
+
+  select count(*) into v_count
+    from public.month_charges(
+      v_air, v_pilot, (v_month + interval '1 month')::date) c
+   where c.kind = 'expense_credit'
+     and c.description like '%Restore Fuel Dock%';
+  if v_count <> 0 then
+    raise exception 'FAIL  a billed receipt was credited again next month after restore';
+  end if;
+
+  -- And the postings still net, with a credit in among them.
+  if (select coalesce(sum(debit_credit), 0) from public.gl_journal) <> 0 then
+    raise exception 'FAIL  the restored journal stopped balancing once a receipt was credited';
+  end if;
+
+  raise notice 'PASS  an agreed receipt is credited once and attached to its invoice on vanilla Postgres';
 end $$;
 SQL
 
