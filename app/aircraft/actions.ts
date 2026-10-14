@@ -493,3 +493,39 @@ export async function createMaintenanceItem(
   revalidatePath("/aircraft", "layout");
   redirect(`/aircraft/maintenance/${data.id}`);
 }
+
+/**
+ * Takes an item off the board, or puts it back.
+ *
+ * Not a delete, and that is the whole point: the floats come off in October
+ * and the float inspection stops meaning anything until they go back on, but
+ * the record of every time it was done must survive the winter. `is_active` is
+ * what `maintenance_status` filters on, so clearing it removes the row from
+ * the board and from the re-check dropdown on a snag while leaving the events
+ * and the item itself exactly where they were.
+ *
+ * There is deliberately no way to delete one. An item with maintenance_event
+ * rows behind it is a logbook, and a logbook is not a thing an app should
+ * offer to throw away on a mis-tap.
+ */
+export async function setMaintenanceItemActive(
+  itemId: string,
+  active: boolean,
+): Promise<void> {
+  await requireMember();
+
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("maintenance_item")
+    .update({ is_active: active })
+    .eq("id", itemId)
+    .select("id");
+
+  // RLS refuses a pilot by matching no rows. Nothing to say about it: the
+  // button is only rendered for an admin, so an empty result here is a crafted
+  // request rather than somebody's mistake.
+  if (!data || data.length === 0) redirect("/aircraft");
+
+  revalidatePath("/aircraft", "layout");
+  redirect(active ? `/aircraft/maintenance/${itemId}` : "/aircraft");
+}

@@ -6,6 +6,7 @@ import { SnagCard } from "@/components/snag-card";
 import { TabBar } from "@/components/tab-bar";
 import {
   countAircraftNotes,
+  countRetiredMaintenance,
   getAircraftNotes,
   getLiveSnags,
   getMaintenance,
@@ -51,18 +52,21 @@ export default async function Aircraft() {
     );
   }
 
-  const [snags, maintenance, tachNow, notes, noteCount] = await Promise.all([
-    getLiveSnags(aircraft.id),
-    getMaintenance(aircraft.id),
-    // For the snags that come back due after a number of hours flown. The
-    // maintenance rows carry the same figure, but a snag is not a maintenance
-    // item and should not have to borrow one's row to know the tach.
-    getTachEstimate(aircraft.id),
-    // Five: enough that "did somebody already top up the oil this month?" is
-    // usually answered without a tap, few enough that the tab stays a tab.
-    getAircraftNotes(aircraft.id, 5),
-    countAircraftNotes(aircraft.id),
-  ]);
+  const [snags, maintenance, tachNow, notes, noteCount, retiredCount] =
+    await Promise.all([
+      getLiveSnags(aircraft.id),
+      getMaintenance(aircraft.id),
+      // For the snags that come back due after a number of hours flown. The
+      // maintenance rows carry the same figure, but a snag is not a
+      // maintenance item and should not have to borrow one's row to know the
+      // tach.
+      getTachEstimate(aircraft.id),
+      // Five: enough that "did somebody already top up the oil this month?" is
+      // usually answered without a tap, few enough that the tab stays a tab.
+      getAircraftNotes(aircraft.id, 5),
+      countAircraftNotes(aircraft.id),
+      isAdmin ? countRetiredMaintenance(aircraft.id) : Promise.resolve(0),
+    ]);
 
   const open = snags.filter((snag) => snag.status === "open").length;
   const watch = snags.length - open;
@@ -129,12 +133,24 @@ export default async function Aircraft() {
               belongs to the thing everybody does.
             */}
             {isAdmin && (
-              <Link
-                href="/aircraft/maintenance/new"
-                className="flex min-h-11 items-center py-3 text-[15px] font-semibold text-accent"
-              >
-                Add an item
-              </Link>
+              <div className="flex min-h-11 items-center justify-between py-3 text-[15px] font-semibold">
+                <Link href="/aircraft/maintenance/new" className="text-accent">
+                  Add an item
+                </Link>
+
+                {/*
+                  Only once something has been retired. A permanent door to an
+                  empty room is a door everybody opens once and never again.
+                */}
+                {retiredCount > 0 && (
+                  <Link
+                    href="/aircraft/maintenance/retired"
+                    className="text-muted"
+                  >
+                    {retiredCount} retired
+                  </Link>
+                )}
+              </div>
             )}
           </div>
         )}

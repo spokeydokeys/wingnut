@@ -151,6 +151,44 @@ export async function getMaintenanceItemRow(
 }
 
 /**
+ * The items that have been taken off the board.
+ *
+ * `maintenance_status` filters to active rows, which is right for every other
+ * screen and useless for this one: a retired item has no countdown worth
+ * deriving, only a name and the question of whether it should come back.
+ */
+export async function getRetiredMaintenance(
+  aircraftId: string,
+): Promise<MaintenanceItem[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("maintenance_item")
+    .select("*")
+    .eq("aircraft_id", aircraftId)
+    .eq("is_active", false)
+    .order("sort_order");
+  return data ?? [];
+}
+
+/**
+ * How many are retired, for the way in to the screen that lists them.
+ *
+ * `head: true` sends no rows back, so an admin's Aircraft tab pays a count and
+ * nothing else for a door it will usually not show.
+ */
+export async function countRetiredMaintenance(
+  aircraftId: string,
+): Promise<number> {
+  const supabase = await createClient();
+  const { count } = await supabase
+    .from("maintenance_item")
+    .select("id", { count: "exact", head: true })
+    .eq("aircraft_id", aircraftId)
+    .eq("is_active", false);
+  return count ?? 0;
+}
+
+/**
  * The running log: oil added, tyres pumped, the things nobody has to act on.
  *
  * Newest first. `limit` is how many to show, not a ceiling on how many are

@@ -1,6 +1,9 @@
 import { notFound, redirect } from "next/navigation";
 
-import { updateMaintenanceItem } from "@/app/aircraft/actions";
+import {
+  setMaintenanceItemActive,
+  updateMaintenanceItem,
+} from "@/app/aircraft/actions";
 import { ActionForm } from "@/components/action-form";
 import { BackHeader } from "@/components/back-header";
 import { FIELD } from "@/components/field";
@@ -36,8 +39,14 @@ export default async function EditMaintenanceItem({
   return (
     <>
       <BackHeader
-        href={`/aircraft/maintenance/${id}`}
-        label="Item"
+        // A retired item is not in `maintenance_status`, so its own screen
+        // would be a 404. The list it came from is the way back.
+        href={
+          item.is_active
+            ? `/aircraft/maintenance/${id}`
+            : "/aircraft/maintenance/retired"
+        }
+        label={item.is_active ? "Item" : "Retired"}
         title="Edit item"
         subtitle={
           onTach ? "Measured on the tach" : "Measured on the calendar"
@@ -190,6 +199,28 @@ export default async function EditMaintenanceItem({
             </p>
           </div>
         </ActionForm>
+
+        {/*
+          Below Save, because it is the rarer thing and the one worth a pause.
+          Not a delete: the events behind an item are a logbook, and this only
+          decides whether the board is still counting down to the next one.
+        */}
+        <form
+          action={setMaintenanceItemActive.bind(null, id, !item.is_active)}
+          className="mt-3.5 flex-none"
+        >
+          <p className="mb-2 text-[13px] text-muted">
+            {item.is_active
+              ? "Retiring takes it off the board and out of the re-check list on a snag. Everything already recorded against it is kept, and it can be put back."
+              : "This item is retired, so nothing is counting down to it. Putting it back picks up from the last time it was marked done."}
+          </p>
+          <button
+            type="submit"
+            className="flex h-12 w-full items-center justify-center rounded-xl border-[1.5px] border-ink bg-surface text-base font-semibold"
+          >
+            {item.is_active ? "Retire this item" : "Put it back on the board"}
+          </button>
+        </form>
       </main>
     </>
   );
