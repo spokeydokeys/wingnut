@@ -1315,5 +1315,99 @@ begin
 end $$;
 SQL
 
+echo "==> Checking the aeroplane's running log"
+psql_in <<'SQL'
+do $$
+declare
+  v_air    uuid;
+  v_member uuid;
+  v_note   uuid;
+  v_flight uuid;
+  v_day    date;
+  v_read   numeric;
+  v_est    numeric;
+  v_count  int;
+begin
+  select a.id into v_air from public.aircraft a limit 1;
+  select m.id into v_member from public.member m where m.is_active order by m.full_name limit 1;
+
+  if public.aircraft_tach_estimate(v_air) is null then
+    raise exception 'FAIL  the restored aeroplane has no tach reading to measure from';
+  end if;
+
+  -- A day after everything this script has already done. The sections above
+  -- leave a reading dated a day ahead to prove that a fresh reading IS the
+  -- reset, so "today" is not the end of this aeroplane's history and a note
+  -- written today would not be the newest thing on it. Derived rather than
+  -- guessed, so reordering the sections above cannot quietly make this one
+  -- vacuous.
+  select greatest(
+           coalesce(max(public.aircraft_date(r.read_at)), public.aircraft_today()),
+           coalesce((select max(public.aircraft_date(f.start_at))
+                       from public.flight f where f.aircraft_id = v_air),
+                    public.aircraft_today())
+         ) + 1
+    into v_day
+    from public.tach_reading r
+   where r.aircraft_id = v_air;
+
+  -- A flight that morning, so there is something for a midnight-stamped
+  -- reading to double-count. Written with the restored aircraft_today() and
+  -- zone, because the zone travelling is half of what is being tested: a
+  -- vanilla Postgres whose own clock is UTC must still agree about what day it
+  -- is in Victoria.
+  insert into public.flight
+    (aircraft_id, pilot_member_id, status, start_at, end_at, tach_factor_used)
+  values
+    (v_air, v_member, 'confirmed',
+     (v_day + time '09:00') at time zone 'America/Vancouver',
+     (v_day + time '10:00') at time zone 'America/Vancouver',
+     1.300)
+  returning id into v_flight;
+
+  if (select f.est_tach_hours from public.flight f where f.id = v_flight) is null
+     or (select f.est_tach_hours from public.flight f where f.id = v_flight) <= 0 then
+    raise exception 'FAIL  the morning flight has no hours to be counted twice';
+  end if;
+
+  v_read := round(public.aircraft_tach_estimate(v_air) + 5, 2);
+
+  insert into public.aircraft_note (aircraft_id, body, noted_on, noted_by, tach)
+  values (v_air, 'Added a qt of oil after the restore', v_day, v_member, v_read)
+  returning id into v_note;
+
+  -- The trigger came across, so the note still moves the maintenance clock.
+  select count(*) into v_count from public.tach_reading where note_id = v_note;
+  if v_count <> 1 then
+    raise exception 'FAIL  a note''s tach was not mirrored after restore (% rows)', v_count;
+  end if;
+
+  v_est := public.aircraft_tach_estimate(v_air);
+  if v_est is distinct from v_read then
+    raise exception
+      'FAIL  the restored estimate is % but the meter was read at % -- this morning was counted twice',
+      v_est, v_read;
+  end if;
+
+  -- And the cascade came across. Asked as "is the number gone", not "does
+  -- anything still point at the note": a link that nulled instead of cascading
+  -- would leave the reading setting every due-date, and counting by note_id
+  -- would read zero either way.
+  delete from public.aircraft_note where id = v_note;
+  select count(*) into v_count
+    from public.tach_reading where aircraft_id = v_air and reading = v_read;
+  if v_count <> 0 then
+    raise exception 'FAIL  a deleted note left its reading behind after restore';
+  end if;
+  if public.aircraft_tach_estimate(v_air) >= v_read then
+    raise exception 'FAIL  a deleted note still sets the restored tach estimate';
+  end if;
+
+  delete from public.flight where id = v_flight;
+
+  raise notice 'PASS  a log note moves the tach and lets go of it again on vanilla Postgres';
+end $$;
+SQL
+
 echo
 echo "Escape hatch verified: the export restores and runs on vanilla PostgreSQL."

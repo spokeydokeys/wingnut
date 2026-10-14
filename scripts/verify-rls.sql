@@ -3963,5 +3963,247 @@ begin
 end $$;
 rollback;
 
+-- ===========================================================================
+-- 54. A note's tach IS a tach reading, stamped at noon.
+--
+--     The Log is where somebody writes "added a qt of oil", and if they
+--     happened to look at the meter while they were there, that number is
+--     worth as much as one typed under Log tach reading. The trigger mirrors
+--     it, so the maintenance due-dates move without anybody logging it twice.
+--
+--     The noon part is the half that is easy to get wrong and invisible when
+--     it is. A date field cannot say when in the day the meter was read, and a
+--     bare date becomes midnight -- so a note written this evening would be
+--     stamped BEFORE this morning's flight, and aircraft_tach_estimate, which
+--     adds every flight starting after the newest reading, would add that
+--     flight on top of a reading that already includes it. The aeroplane would
+--     gain an hour it never flew, and the first anybody would know is the
+--     overhaul coming due early.
+--
+--     So the assertion is behavioural: fly this morning, write the note this
+--     afternoon, and the estimate must be exactly what was read -- not what
+--     was read plus the morning.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_ac       uuid := '00000000-0000-0000-0000-0000000ac001';
+  v_member   uuid := '00000000-0000-0000-0000-00000000a001';
+  v_note     uuid;
+  v_flight   uuid;
+  v_base     numeric;
+  v_read     numeric;
+  v_est      numeric;
+  v_rows     int;
+  v_read_at  timestamptz;
+begin
+  v_base := public.aircraft_tach_estimate(v_ac);
+  if v_base is null then
+    raise exception 'VACUOUS  the aeroplane has no reading, so nothing can move';
+  end if;
+
+  -- This morning, at 09:00 where the aeroplane is. Not now(): inside one
+  -- transaction a timer start and stop are the same instant, and a zero-length
+  -- flight has no hours to double-count.
+  insert into public.flight
+    (aircraft_id, pilot_member_id, status, start_at, end_at, tach_factor_used)
+  values
+    (v_ac, v_member, 'confirmed',
+     (public.aircraft_today() + time '09:00') at time zone 'America/Vancouver',
+     (public.aircraft_today() + time '10:00') at time zone 'America/Vancouver',
+     1.300)
+  returning id into v_flight;
+
+  if (select est_tach_hours from public.flight where id = v_flight) is null
+     or (select est_tach_hours from public.flight where id = v_flight) <= 0 then
+    raise exception 'VACUOUS  the morning flight has no hours to be added twice';
+  end if;
+
+  -- Read the meter after landing and write it up over coffee. The number is
+  -- deliberately well above the estimate so neither can be mistaken for the
+  -- other.
+  v_read := round(public.aircraft_tach_estimate(v_ac) + 5, 2);
+
+  insert into public.aircraft_note (aircraft_id, body, noted_on, noted_by, tach)
+  values (v_ac, 'Added a qt of oil', public.aircraft_today(), v_member, v_read)
+  returning id into v_note;
+
+  select count(*) into v_rows
+    from public.tach_reading where note_id = v_note;
+  if v_rows <> 1 then
+    raise exception 'FAIL  a note''s tach was not mirrored into tach_reading (% rows)', v_rows;
+  end if;
+
+  select reading, read_at into v_est, v_read_at
+    from public.tach_reading where note_id = v_note;
+  if v_est is distinct from v_read then
+    raise exception 'FAIL  the mirrored reading says % and the note says %', v_est, v_read;
+  end if;
+  if public.aircraft_date(v_read_at) is distinct from public.aircraft_today() then
+    raise exception 'FAIL  the reading landed on %, not the day the note is dated',
+      public.aircraft_date(v_read_at);
+  end if;
+
+  -- Re-saving corrects the reading rather than adding another. Two rows for
+  -- one note would mean the estimate depended on which was written last, and
+  -- the one a typo was corrected in might not be it.
+  update public.aircraft_note set tach = v_read + 0.10 where id = v_note;
+  select count(*) into v_rows from public.tach_reading where note_id = v_note;
+  if v_rows <> 1 then
+    raise exception 'FAIL  re-saving a note left % readings for it', v_rows;
+  end if;
+  if (select reading from public.tach_reading where note_id = v_note)
+     is distinct from v_read + 0.10 then
+    raise exception 'FAIL  correcting a note''s tach did not correct its reading';
+  end if;
+  update public.aircraft_note set tach = v_read where id = v_note;
+
+  -- The whole point. Midnight would give v_read + this morning's flight.
+  v_est := public.aircraft_tach_estimate(v_ac);
+  if v_est is distinct from v_read then
+    raise exception
+      'FAIL  the estimate is % but the meter was read at % -- this morning''s flight was counted on top',
+      v_est, v_read;
+  end if;
+
+  -- Clearing the number removes the reading it stood for. A note that no
+  -- longer claims a tach must not leave the maintenance clock set by one.
+  update public.aircraft_note set tach = null where id = v_note;
+  select count(*) into v_rows from public.tach_reading where note_id = v_note;
+  if v_rows <> 0 then
+    raise exception 'FAIL  clearing a note''s tach left its reading behind';
+  end if;
+
+  -- And deleting the note takes its reading with it, rather than leaving an
+  -- orphan that nothing on any screen can explain or correct.
+  --
+  -- Counting rows that still point AT the note is not enough, and a first
+  -- draft of this check proved nothing: a foreign key that nulled the link
+  -- instead of cascading would leave the reading sitting there, still the
+  -- newest, still setting every maintenance due-date -- and `where note_id =
+  -- v_note` would count zero either way. So the question asked is whether the
+  -- NUMBER is gone, and whether the estimate has let go of it.
+  update public.aircraft_note set tach = v_read where id = v_note;
+  delete from public.aircraft_note where id = v_note;
+  select count(*) into v_rows
+    from public.tach_reading where aircraft_id = v_ac and reading = v_read;
+  if v_rows <> 0 then
+    raise exception 'FAIL  a deleted note left its reading behind';
+  end if;
+  if public.aircraft_tach_estimate(v_ac) >= v_read then
+    raise exception 'FAIL  a deleted note is still setting the tach estimate';
+  end if;
+
+  raise notice 'PASS  a note''s tach reads the meter at noon, and goes when the note does';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 55. A note is somebody's account of what they did.
+--
+--     Everyone reads the log, because the aeroplane is shared and "has anyone
+--     topped up the oil?" is the question it exists to answer. But correcting
+--     or deleting one stays with whoever wrote it: a log another member can
+--     rewrite is evidence of nothing, and the one thing worse than no record
+--     of the oil is a record somebody else edited.
+--
+--     Run as a pilot, not an owner. Both seed members are admins, and
+--     aircraft_note_admin_all would hand them each other's notes -- so an
+--     owner-versus-owner version of this check would pass for the wrong
+--     reason, proving only that admins are admins.
+--
+--     Two layers for the mutation, as in check 46: SELECT is granted to every
+--     member, so aircraft_note_write_own has to go AND a permissive write
+--     policy has to be added before this can fail.
+-- ===========================================================================
+begin;
+do $$
+declare
+  v_ac      uuid := '00000000-0000-0000-0000-0000000ac001';
+  v_owner   uuid := '00000000-0000-0000-0000-00000000a001';
+  v_pilot   uuid;
+  v_note    uuid;
+  v_rows    int;
+  v_refused boolean := false;
+begin
+  insert into public.aircraft_note (aircraft_id, body, noted_by)
+  values (v_ac, 'Owner One put air in the tires', v_owner)
+  returning id into v_note;
+
+  alter table public.member disable trigger member_guard_privileged_columns;
+  insert into public.member (full_name, email, role, auth_user_id)
+  values ('Aaron Renter', 'renter@example.test', 'pilot',
+          '00000000-0000-0000-0000-0000000a0033')
+  returning id into v_pilot;
+  alter table public.member enable trigger member_guard_privileged_columns;
+
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000a0033",
+      "email":"renter@example.test"}', true);
+
+  if public.current_member_id() is distinct from v_pilot then
+    raise exception 'FAIL  the test pilot could not be resolved';
+  end if;
+  if public.is_admin() then
+    raise exception 'FAIL  this check is vacuous: the test pilot is an admin';
+  end if;
+
+  -- They read it. That is the whole point of a shared log.
+  select count(*) into v_rows from public.aircraft_note where id = v_note;
+  if v_rows <> 1 then
+    raise exception 'FAIL  a pilot cannot read the log';
+  end if;
+
+  -- They do not rewrite it. An UPDATE a policy hides touches nothing, so this
+  -- is read back rather than caught.
+  update public.aircraft_note
+     set body = 'Aaron says this never happened' where id = v_note;
+  if (select body from public.aircraft_note where id = v_note)
+     is distinct from 'Owner One put air in the tires' then
+    raise exception 'FAIL  a pilot rewrote somebody else''s note';
+  end if;
+
+  delete from public.aircraft_note where id = v_note;
+  select count(*) into v_rows from public.aircraft_note where id = v_note;
+  if v_rows <> 1 then
+    raise exception 'FAIL  a pilot deleted somebody else''s note';
+  end if;
+
+  -- They cannot sign one in another member's name either, which is what makes
+  -- the author worth anything.
+  begin
+    insert into public.aircraft_note (aircraft_id, body, noted_by)
+    values (v_ac, 'Signed by somebody who was not there', v_owner);
+  exception when others then
+    v_refused := true;
+  end;
+  if not v_refused then
+    raise exception 'FAIL  a pilot wrote a note in another member''s name';
+  end if;
+
+  -- But their own note is theirs to write, fix and withdraw.
+  insert into public.aircraft_note (aircraft_id, body, noted_by)
+  values (v_ac, 'Topped up the oil myself', v_pilot)
+  returning id into v_note;
+
+  update public.aircraft_note set body = 'Topped up the oil, half a qt'
+   where id = v_note;
+  if (select body from public.aircraft_note where id = v_note)
+     is distinct from 'Topped up the oil, half a qt' then
+    raise exception 'FAIL  a pilot cannot correct their own note';
+  end if;
+
+  delete from public.aircraft_note where id = v_note;
+  select count(*) into v_rows from public.aircraft_note where id = v_note;
+  if v_rows <> 0 then
+    raise exception 'FAIL  a pilot cannot withdraw their own note';
+  end if;
+
+  perform set_config('role', 'postgres', true);
+  raise notice 'PASS  the log is everyone''s to read and only its author''s to change';
+end $$;
+rollback;
+
 \echo ''
 \echo 'All core schema checks passed.'
