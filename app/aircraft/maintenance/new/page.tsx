@@ -5,6 +5,7 @@ import { createMaintenanceItem } from "@/app/aircraft/actions";
 import { ActionForm } from "@/components/action-form";
 import { BackHeader } from "@/components/back-header";
 import { FIELD } from "@/components/field";
+import { getSnag } from "@/lib/aircraft";
 import { requireMember } from "@/lib/dal";
 
 export const dynamic = "force-dynamic";
@@ -26,22 +27,28 @@ export default async function NewMaintenanceItem({
   const member = await requireMember();
   if (member.role !== "admin") redirect("/aircraft");
 
-  const { basis } = await searchParams;
+  const { basis, from } = await searchParams;
   const onTach = basis === "tach";
+
+  // Promoted out of a snag, when it came from one. The snag survives and is
+  // set to wait on the new item, so the fault and the job stay joined up.
+  const snagId = typeof from === "string" ? from : undefined;
+  const snag = snagId ? await getSnag(snagId) : null;
+  const carry = snag ? `&from=${snag.id}` : "";
 
   if (basis !== "tach" && basis !== "calendar") {
     return (
       <>
         <BackHeader
-          href="/aircraft"
-          label="Aircraft"
-          title="New item"
+          href={snag ? `/aircraft/snag/${snag.id}` : "/aircraft"}
+          label={snag ? "Snag" : "Aircraft"}
+          title={snag ? "Make it a job" : "New item"}
           subtitle="Which clock does it run on?"
         />
 
         <main className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 pt-3.5 pb-4">
           <Link
-            href="/aircraft/maintenance/new?basis=tach"
+            href={`/aircraft/maintenance/new?basis=tach${carry}`}
             className="flex-none rounded-xl border border-line bg-surface px-3.5 py-3"
           >
             <span className="block text-[15px] font-semibold">
@@ -54,7 +61,7 @@ export default async function NewMaintenanceItem({
           </Link>
 
           <Link
-            href="/aircraft/maintenance/new?basis=calendar"
+            href={`/aircraft/maintenance/new?basis=calendar${carry}`}
             className="flex-none rounded-xl border border-line bg-surface px-3.5 py-3"
           >
             <span className="block text-[15px] font-semibold">
@@ -73,17 +80,19 @@ export default async function NewMaintenanceItem({
   return (
     <>
       <BackHeader
-        href="/aircraft/maintenance/new"
+        href={`/aircraft/maintenance/new${snag ? `?from=${snag.id}` : ""}`}
         label="Back"
-        title="New item"
+        title={snag ? "Make it a job" : "New item"}
         subtitle={onTach ? "Measured on the tach" : "Measured on the calendar"}
       />
 
       <main className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-3.5 pb-4">
         <ActionForm
           action={createMaintenanceItem.bind(null, basis)}
-          submitLabel="Add item"
+          submitLabel={snag ? "Make it a job" : "Add item"}
         >
+          {snag && <input type="hidden" name="from" value={snag.id} />}
+
           <div>
             <label htmlFor="name" className="field-label mb-1.5 block">
               Name
@@ -93,6 +102,10 @@ export default async function NewMaintenanceItem({
               name="name"
               type="text"
               required
+              // The snag's words, to be edited: "Oil seep at valve cover" is
+              // how the fault was described, and the job is probably called
+              // something nearer "Valve cover torque check".
+              defaultValue={snag?.title}
               placeholder={onTach ? "Oil and filter change" : "Annual inspection"}
               className={FIELD}
             />
@@ -252,6 +265,8 @@ export default async function NewMaintenanceItem({
           <p className="rounded-[10px] border border-line bg-surface px-3 py-2.5 text-[13px] text-muted">
             Nothing counts down until the item has been marked done once, so the
             next screen asks when the job was last actually carried out.
+            {snag &&
+              ` “${snag.title}” stays open and will be set to wait on this job, so whoever does it is told.`}
           </p>
         </ActionForm>
       </main>

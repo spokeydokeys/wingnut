@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { deleteSnag, updateSnag } from "@/app/aircraft/actions";
@@ -96,6 +97,22 @@ export default async function SnagDetail({ params }: PageProps<"/aircraft/snag/[
             />
           </div>
         </ActionForm>
+
+        {/*
+          Some snags are not faults at all, they are jobs nobody had written
+          down -- the seep that wants the valve cover torque checked every so
+          often. Re-check only points at jobs that already exist, so without
+          this the admin has to go and make one and come back; this takes the
+          snag's own words along and wires the two together on the way.
+        */}
+        {member.role === "admin" && (
+          <Link
+            href={`/aircraft/maintenance/new?from=${snag.id}`}
+            className="mt-3.5 flex min-h-11 flex-none items-center justify-center rounded-xl border-[1.5px] border-ink bg-surface text-[15px] font-semibold"
+          >
+            Make this a maintenance item
+          </Link>
+        )}
 
         {/*
           Only the author, matching `snag_delete_own`. An admin's own policy

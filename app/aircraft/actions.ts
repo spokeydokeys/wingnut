@@ -433,6 +433,11 @@ export async function updateMaintenanceItem(
  * New items go to the bottom. The board is read top to bottom and the order of
  * the seeded four means something to whoever set them up; dropping a new row
  * into the middle of that is a change nobody asked for.
+ *
+ * A `from` snag means this item was promoted out of one -- a fault that turned
+ * out to be a job -- and the snag is then set to wait on it. That is the point
+ * of promoting rather than retyping: the snag stops being a loose worry and
+ * starts being something the next person to do the job will be told about.
  */
 export async function createMaintenanceItem(
   basis: "tach" | "calendar",
@@ -488,6 +493,20 @@ export async function createMaintenanceItem(
       error:
         "Only an admin can add a maintenance item. Ask one of them to add it.",
     };
+  }
+
+  const from = String(form.get("from") ?? "");
+  if (from !== "") {
+    // The other two re-check columns go with it: `snag_recheck_one_way` allows
+    // at most one, and a snag cannot both wait on a job and wait on a date.
+    await supabase
+      .from("snag")
+      .update({
+        recheck_item_id: data.id,
+        recheck_tach_hours: null,
+        recheck_on: null,
+      })
+      .eq("id", from);
   }
 
   revalidatePath("/aircraft", "layout");
