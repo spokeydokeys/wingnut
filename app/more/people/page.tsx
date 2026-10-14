@@ -1,0 +1,87 @@
+import Link from "next/link";
+
+import { BackHeader } from "@/components/back-header";
+import { Chip } from "@/components/chip";
+import { requireAdmin } from "@/lib/dal";
+import { getPeople } from "@/lib/people";
+
+export const dynamic = "force-dynamic";
+
+/**
+ * The roster. Until now the only way to put somebody on it was psql.
+ *
+ * Admin only, and `member_admin_write` is what actually enforces that -- the
+ * requireAdmin above only decides whether the screen is worth drawing. A pilot
+ * who reached this URL would be shown a list (everyone can read the roster)
+ * and refused every button on it, which is a worse screen than no screen.
+ *
+ * There is no delete. A member is referenced by every flight, invoice and
+ * receipt behind them and `ownership_share.member_id` is `on delete restrict`,
+ * so the only honest end for somebody who leaves is to stop being active.
+ */
+export default async function People() {
+  const me = await requireAdmin();
+  const people = await getPeople();
+
+  return (
+    <>
+      <BackHeader
+        href="/more"
+        label="More"
+        title="People"
+        subtitle="Who is on the roster, what they may do, and who is still to sign in."
+        action={
+          <Link
+            href="/more/people/new"
+            className="flex h-11 items-center rounded-[10px] border-[1.5px] border-ink bg-surface px-4 text-[15px] font-semibold"
+          >
+            + Person
+          </Link>
+        }
+      />
+
+      <main className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 pt-3.5 pb-4">
+        {people.map((person) => (
+          <div
+            key={person.id}
+            className={`flex-none rounded-[14px] border bg-surface px-3.5 py-3 ${
+              person.is_active ? "border-line" : "border-hairline opacity-60"
+            }`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-base font-semibold">
+                  {person.full_name}
+                  {person.id === me.id && (
+                    <span className="font-normal text-muted"> · you</span>
+                  )}
+                </div>
+                <div className="truncate text-[13px] text-muted">{person.email}</div>
+              </div>
+
+              <span className="flex-none">
+                <Chip tone="neutral">
+                  {person.role === "admin" ? "Admin" : "Pilot"}
+                </Chip>
+              </span>
+            </div>
+
+            {/*
+              Two different kinds of "not here". Never signed in is a job to
+              finish -- the magic link is waiting for them; no longer active is
+              a decision somebody made. Saying "Invited" for both would hide
+              the difference behind one word.
+            */}
+            {(!person.auth_user_id || !person.is_active) && (
+              <p className="mt-1.5 text-[13px] text-muted">
+                {!person.is_active
+                  ? "No longer active. Their flights and invoices are untouched."
+                  : "Has not signed in yet. Sending them the sign-in link finishes it."}
+              </p>
+            )}
+          </div>
+        ))}
+      </main>
+    </>
+  );
+}

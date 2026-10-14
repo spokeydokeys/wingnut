@@ -83,6 +83,36 @@ export default async function More() {
           </svg>
         </Link>
 
+        {/* Admin only, and not greyed out for everyone else: a pilot has no
+            business knowing this screen exists, because every button on it
+            would refuse them. */}
+        {member.role === "admin" && (
+          <Link
+            href="/more/people"
+            className="flex items-center justify-between rounded-[14px] border border-line bg-surface p-3.5"
+          >
+            <span>
+              <span className="block text-base font-semibold">People</span>
+              <span className="block text-[13px] text-muted">
+                Add an owner, make somebody an admin, or retire a share
+              </span>
+            </span>
+            <svg
+              aria-hidden="true"
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M9 5l7 7-7 7" />
+            </svg>
+          </Link>
+        )}
+
         <Link
           href="/more/places"
           className="flex items-center justify-between rounded-[14px] border border-line bg-surface p-3.5"
