@@ -56,6 +56,33 @@ export default async function More() {
           </svg>
         </Link>
 
+        {/* SPEC.md 3 puts the calendar here rather than on a tab, and 4.5 is
+            why it is shared: the other owner's slots are the point. */}
+        <Link
+          href="/bookings"
+          className="flex items-center justify-between rounded-[14px] border border-line bg-surface p-3.5"
+        >
+          <span>
+            <span className="block text-base font-semibold">Bookings</span>
+            <span className="block text-[13px] text-muted">
+              Who has the aeroplane, and when you can have it
+            </span>
+          </span>
+          <svg
+            aria-hidden="true"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M9 5l7 7-7 7" />
+          </svg>
+        </Link>
+
         <Link
           href="/tasks"
           className="flex items-center justify-between rounded-[14px] border border-line bg-surface p-3.5"
@@ -107,8 +134,8 @@ export default async function More() {
         </Link>
 
         <p className="rounded-[14px] border border-line bg-surface p-3.5 text-[15px] text-muted">
-          Bookings, reserves, ownership shares and the iOS Shortcut token will
-          appear here as those phases land.
+          Reserves, ownership shares and the iOS Shortcut token will appear here
+          as those phases land.
         </p>
 
         <form action={signOut}>
