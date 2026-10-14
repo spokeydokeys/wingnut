@@ -4205,5 +4205,142 @@ begin
 end $$;
 rollback;
 
+-- ===========================================================================
+-- 56. The aeroplane cannot be in two places at once. SPEC.md 4.5 asks for
+--     conflict prevention, and `booking_no_overlap` is the whole of it -- no
+--     application check backs this up, so if the constraint stops working
+--     nothing else notices.
+--
+--     Both directions matter. An overlap must be refused, and the noon
+--     handover -- one slot ending where the next begins -- must be allowed,
+--     because a closed range would look identical until the day somebody
+--     could not book the afternoon.
+-- ===========================================================================
+begin;
+
+insert into public.member (id, auth_user_id, full_name, email, role)
+values ('00000000-0000-0000-0000-00000000a056',
+        '00000000-0000-0000-0000-0000000a0056',
+        'Test Pilot Booking', 'bookpilot@example.test', 'pilot');
+
+do $$
+declare
+  v_ac      uuid := '00000000-0000-0000-0000-0000000ac001';
+  v_pilot   uuid := '00000000-0000-0000-0000-00000000a056';
+  -- Far enough out to be clear of the seed's sample bookings.
+  v_base    timestamptz := date_trunc('hour', now()) + interval '90 days';
+  v_refused boolean := false;
+  v_rows    int;
+begin
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+                     '{"sub":"00000000-0000-0000-0000-0000000a0056"}', true);
+
+  insert into public.booking (aircraft_id, pilot_member_id, start_at, end_at)
+  values (v_ac, v_pilot, v_base, v_base + interval '3 hours');
+
+  begin
+    insert into public.booking (aircraft_id, pilot_member_id, start_at, end_at)
+    values (v_ac, v_pilot, v_base + interval '2 hours', v_base + interval '4 hours');
+  exception when exclusion_violation then
+    v_refused := true;
+  end;
+
+  if not v_refused then
+    raise exception 'FAIL  the aeroplane was booked twice over the same hour';
+  end if;
+
+  -- The handover: starts exactly where the first one ends.
+  insert into public.booking (aircraft_id, pilot_member_id, start_at, end_at)
+  values (v_ac, v_pilot, v_base + interval '3 hours', v_base + interval '5 hours');
+
+  select count(*) into v_rows
+    from public.booking
+   where aircraft_id = v_ac
+     and start_at = v_base + interval '3 hours';
+  if v_rows <> 1 then
+    raise exception 'FAIL  a booking starting at the handover was refused';
+  end if;
+
+  perform set_config('role', 'postgres', true);
+  raise notice 'PASS  no double-booking, and the noon handover is not one';
+end $$;
+rollback;
+
+-- ===========================================================================
+-- 57. The calendar is everybody's. SPEC.md 4.5 wants the other pilot's
+--     bookings visible, and this co-ownership is small enough that an owner
+--     who is told "scrub my Saturday, I'm stuck in Vancouver" should be able
+--     to do it rather than explain that the app will not let them.
+--
+--     Run as a PILOT, not an admin: `booking_admin_all` would carry an admin
+--     through either way, and then the check would prove nothing about the
+--     policy it is named after.
+--
+--     Booking in somebody else's name is still refused, because that is the
+--     one thing here that is not an answer to a phone call.
+-- ===========================================================================
+begin;
+
+insert into public.member (id, auth_user_id, full_name, email, role)
+values ('00000000-0000-0000-0000-00000000a057',
+        '00000000-0000-0000-0000-0000000a0057',
+        'Test Pilot Calendar', 'calpilot@example.test', 'pilot');
+
+do $$
+declare
+  v_ac      uuid := '00000000-0000-0000-0000-0000000ac001';
+  v_owner   uuid := '00000000-0000-0000-0000-00000000a002';
+  v_pilot   uuid := '00000000-0000-0000-0000-00000000a057';
+  v_base    timestamptz := date_trunc('hour', now()) + interval '120 days';
+  v_slot    uuid;
+  v_refused boolean := false;
+  v_held_by uuid;
+  v_rows    int;
+begin
+  insert into public.booking (aircraft_id, pilot_member_id, start_at, end_at, note)
+  values (v_ac, v_owner, v_base, v_base + interval '3 hours', 'Owner two''s Saturday')
+  returning id into v_slot;
+
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+                     '{"sub":"00000000-0000-0000-0000-0000000a0057"}', true);
+
+  -- Visible, and visibly somebody else's -- a count alone would not say whose.
+  select pilot_member_id into v_held_by
+    from public.booking where id = v_slot;
+  if v_held_by is distinct from v_owner then
+    raise exception 'FAIL  a pilot cannot see another owner''s booking';
+  end if;
+
+  begin
+    insert into public.booking (aircraft_id, pilot_member_id, start_at, end_at)
+    values (v_ac, v_owner, v_base + interval '5 hours', v_base + interval '6 hours');
+  exception when others then
+    v_refused := true;
+  end;
+  if not v_refused then
+    raise exception 'FAIL  a pilot held the aeroplane in another owner''s name';
+  end if;
+
+  update public.booking
+     set end_at = v_base + interval '4 hours'
+   where id = v_slot;
+  if (select end_at from public.booking where id = v_slot)
+     is distinct from v_base + interval '4 hours' then
+    raise exception 'FAIL  a pilot cannot shift another owner''s booking';
+  end if;
+
+  delete from public.booking where id = v_slot;
+  select count(*) into v_rows from public.booking where id = v_slot;
+  if v_rows <> 0 then
+    raise exception 'FAIL  a pilot cannot release another owner''s slot';
+  end if;
+
+  perform set_config('role', 'postgres', true);
+  raise notice 'PASS  any owner may read, shift and release any booking';
+end $$;
+rollback;
+
 \echo ''
 \echo 'All core schema checks passed.'

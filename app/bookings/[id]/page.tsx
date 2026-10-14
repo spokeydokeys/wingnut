@@ -13,9 +13,12 @@ export const dynamic = "force-dynamic";
  *
  * Giving a slot up is here rather than on the list, so that nothing
  * irreversible sits under a thumb scrolling the calendar -- the same reason a
- * task's "Drop it" lives on the task. The button only appears on a booking you
- * are allowed to release, because RLS would otherwise refuse by matching no
- * rows and the screen would read as though it had worked.
+ * task's "Drop it" lives on the task.
+ *
+ * Anybody may release anybody's slot: three people who fly one aeroplane sort
+ * this out by phone, and the owner taking the call should be able to act on it.
+ * The wording changes rather than the button disappearing, because releasing
+ * somebody else's Saturday should not feel like releasing your own.
  *
  * Changing the times is deliberately not offered yet: giving the slot up and
  * taking the one you meant is two taps and cannot get the overlap rule wrong.
@@ -28,7 +31,7 @@ export default async function BookingDetail({ params }: PageProps<"/bookings/[id
   if (!booking) notFound();
 
   const mine = booking.pilot_member_id === member.id;
-  const canRelease = mine || member.role === "admin";
+  const holder = booking.pilot?.full_name ?? "A former owner";
 
   return (
     <>
@@ -43,7 +46,7 @@ export default async function BookingDetail({ params }: PageProps<"/bookings/[id
         <div className="flex-none rounded-[14px] border border-line bg-surface p-3.5">
           <div className="field-label">Held by</div>
           <div className="text-base font-semibold">
-            {booking.pilot?.full_name ?? "A former owner"}
+            {holder}
             {mine && <span className="font-normal text-muted"> — you</span>}
           </div>
         </div>
@@ -55,26 +58,23 @@ export default async function BookingDetail({ params }: PageProps<"/bookings/[id
           </div>
         )}
 
-        {!canRelease && (
+        <div className="flex-1" />
+
+        {!mine && (
           <p className="flex-none text-[13px] text-muted">
-            It is{" "}
-            {booking.pilot?.full_name ?? "another owner"}
-            &apos;s slot. Ask them if you need it.
+            This is {holder}&apos;s slot. Nothing tells them it has gone, so
+            only do this if they asked.
           </p>
         )}
 
-        <div className="flex-1" />
-
-        {canRelease && (
-          <form action={releaseBooking.bind(null, booking.id)} className="flex-none">
-            <button
-              type="submit"
-              className="flex h-12 w-full items-center justify-center rounded-xl border-[1.5px] border-ink bg-surface text-base font-semibold"
-            >
-              Give up this slot
-            </button>
-          </form>
-        )}
+        <form action={releaseBooking.bind(null, booking.id)} className="flex-none">
+          <button
+            type="submit"
+            className="flex h-12 w-full items-center justify-center rounded-xl border-[1.5px] border-ink bg-surface text-base font-semibold"
+          >
+            {mine ? "Give up this slot" : "Release this slot"}
+          </button>
+        </form>
       </main>
     </>
   );

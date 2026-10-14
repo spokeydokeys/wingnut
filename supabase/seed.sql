@@ -296,7 +296,7 @@ insert into public.aircraft_note (aircraft_id, body, noted_on, noted_by) values
 -- Sample bookings
 --
 -- TODO(seed) DELETE these rows. They exist so the calendar has something to lay
--- out in local development, in all three of its views.
+-- out in local development, in both of its views.
 --
 -- Dated RELATIVE to today rather than written as literals, because a calendar
 -- seeded with fixed dates shows an empty "upcoming" the week after it is
