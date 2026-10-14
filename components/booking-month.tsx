@@ -40,13 +40,26 @@ export function BookingMonth({
     <>
       <div className="flex flex-none items-center justify-between">
         <MonthStep month={addMonths(month, -1)} label="Previous month" back />
-        <h2 className="text-base font-semibold">
-          {new Intl.DateTimeFormat("en-GB", {
-            timeZone: "UTC",
-            month: "long",
-            year: "numeric",
-          }).format(new Date(`${month}-01T00:00:00Z`))}
-        </h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-base font-semibold">
+            {new Intl.DateTimeFormat("en-GB", {
+              timeZone: "UTC",
+              month: "long",
+              year: "numeric",
+            }).format(new Date(`${month}-01T00:00:00Z`))}
+          </h2>
+          {/* Four taps of an arrow is the only other way back from March, and
+              the day somebody wants is nearly always near today. Hidden when
+              today is already the day on show, so it is never a no-op. */}
+          {selected !== today && (
+            <Link
+              href={`/bookings?view=month&month=${today.slice(0, 7)}&day=${today}`}
+              className="flex h-7 items-center rounded-[8px] border border-line px-2 text-[12px] font-semibold text-muted"
+            >
+              Today
+            </Link>
+          )}
+        </div>
         <MonthStep month={addMonths(month, 1)} label="Next month" />
       </div>
 
