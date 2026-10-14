@@ -494,3 +494,95 @@ values
    '00000000-0000-0000-0000-00000000a001',
    date '2026-11-30',
    '00000000-0000-0000-0000-00000000a001');
+
+-- ---------------------------------------------------------------------------
+-- Receipts
+--
+-- Three rows, one for each state the screens have to render, all invented and
+-- all to be DELETED rather than corrected:
+--
+--   b1001  member-paid and APPROVED  -> October's bill carries a -$248.60
+--          credit for it, which is what proves the month_charges arm works
+--          end to end rather than only in a test
+--   b1002  member-paid and SUBMITTED -> sits in the approvals queue, and
+--          belongs to Owner Two so that signing in as Owner One has something
+--          to approve
+--   b1003  company card, RECORDED    -> nobody is owed anything, so it never
+--          appears on a bill; it is here because the other owner is entitled
+--          to see what the card was used for
+--
+-- gst_amount is 0 on all three with tax_treatment 'taxable', which is not a
+-- contradiction: the fuel really was taxed, the tax really is inside the total,
+-- and the company cannot recover any of it until it registers. When
+-- company.gst_registered flips, new receipts split the tax out and these stay
+-- as the historical record of the period before it.
+--
+-- receipt_key points into the receipts bucket at objects this seed does not
+-- create. That is deliberate as well as unavoidable: "approved receipt whose
+-- image will not load" is a state the detail screen has to survive, and it is
+-- better seen now than discovered in a hangar.
+--
+-- expense_stamp_people is disabled for the approved row for the same reason
+-- task_stamp_completed is above: it stamps reviewed_at from now(), and a
+-- historical approval cannot be stated any other way from a file with nobody
+-- signed in.
+-- ---------------------------------------------------------------------------
+
+alter table public.expense disable trigger expense_stamp_people;
+
+insert into public.expense
+  (id, company_id, aircraft_id, payer, paid_by_member_id, vendor, spent_on,
+   total_amount, gst_amount, tax_treatment, gl_account_code, charge_to, litres,
+   note, receipt_key, status, submitted_by, reviewed_by, reviewed_at)
+values (
+  '00000000-0000-0000-0000-0000000b1001',
+  '00000000-0000-0000-0000-00000000c000',
+  '00000000-0000-0000-0000-0000000ac001',
+  'member', '00000000-0000-0000-0000-00000000a001',
+  'TODO(seed) Esso Nanaimo', date '2026-10-04',
+  248.60, 0, 'taxable', '5100', 'pool', 134.40,
+  'Topped up both tanks after the Example Bay run.',
+  'receipt/00000000-0000-0000-0000-00000000c000/2026/10/b1001.jpg',
+  'approved',
+  '00000000-0000-0000-0000-00000000a001',
+  -- The other owner, which is the whole rule.
+  '00000000-0000-0000-0000-00000000a002',
+  timestamptz '2026-10-06 08:15:00-07'
+);
+
+alter table public.expense enable trigger expense_stamp_people;
+
+insert into public.expense
+  (id, company_id, aircraft_id, payer, paid_by_member_id, vendor, spent_on,
+   total_amount, gst_amount, tax_treatment, gl_account_code, charge_to,
+   note, receipt_key, status, submitted_by)
+values (
+  '00000000-0000-0000-0000-0000000b1002',
+  '00000000-0000-0000-0000-00000000c000',
+  '00000000-0000-0000-0000-0000000ac001',
+  'member', '00000000-0000-0000-0000-00000000a002',
+  'TODO(seed) Island Aero Supply', date '2026-10-09',
+  112.35, 0, 'taxable', '5300', 'pool',
+  'Four litres of W100 and a spare oil filter for the shelf.',
+  'receipt/00000000-0000-0000-0000-00000000c000/2026/10/b1002.jpg',
+  'submitted',
+  '00000000-0000-0000-0000-00000000a002'
+);
+
+-- No paid_by_member_id and no approval: the company has already paid itself
+-- out, so there is nobody to reimburse and nothing to agree to.
+insert into public.expense
+  (id, company_id, aircraft_id, payer, vendor, spent_on,
+   total_amount, gst_amount, tax_treatment, gl_account_code, charge_to,
+   note, receipt_key, status, submitted_by)
+values (
+  '00000000-0000-0000-0000-0000000b1003',
+  '00000000-0000-0000-0000-00000000c000',
+  '00000000-0000-0000-0000-0000000ac001',
+  'company', 'TODO(seed) Victoria Harbour Air Services', date '2026-10-11',
+  86.00, 0, 'taxable', '5900', 'pool',
+  'Dock fees for the month, on the company card.',
+  'receipt/00000000-0000-0000-0000-00000000c000/2026/10/b1003.jpg',
+  'recorded',
+  '00000000-0000-0000-0000-00000000a002'
+);
