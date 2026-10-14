@@ -25,6 +25,32 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"aircraft_note": {
+                  Row: {
+                    "aircraft_id": string,"body": string,"created_at": string,"id": string,"noted_by": string | null,"noted_on": string,"tach": number | null,"updated_at": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "aircraft_id": string,"body": string,"created_at"?: string,"id"?: string,"noted_by"?: string | null,"noted_on"?: string,"tach"?: number | null,"updated_at"?: string
+                  }
+                  Update: {
+                    "aircraft_id"?: string,"body"?: string,"created_at"?: string,"id"?: string,"noted_by"?: string | null,"noted_on"?: string,"tach"?: number | null,"updated_at"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "aircraft_note_aircraft_id_fkey"
+      columns: ["aircraft_id"]
+isOneToOne: false
+      referencedRelation: "aircraft"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "aircraft_note_noted_by_fkey"
+      columns: ["noted_by"]
+isOneToOne: false
+      referencedRelation: "member"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"api_token": {
                   Row: {
                     "created_at": string,"id": string,"label": string | null,"last_used_at": string | null,"member_id": string,"revoked_at": string | null,"token_hash": string
@@ -589,14 +615,14 @@ isOneToOne: false
                   ]
                 },"tach_reading": {
                   Row: {
-                    "aircraft_id": string,"created_at": string,"flight_id": string | null,"id": string,"note": string | null,"read_at": string,"read_by": string | null,"reading": number,"source": Database["public"]['Enums']["tach_reading_source"]
+                    "aircraft_id": string,"created_at": string,"flight_id": string | null,"id": string,"note": string | null,"note_id": string | null,"read_at": string,"read_by": string | null,"reading": number,"source": Database["public"]['Enums']["tach_reading_source"]
                   }
                   ComputedFields: never
                   Insert: {
-                    "aircraft_id": string,"created_at"?: string,"flight_id"?: string | null,"id"?: string,"note"?: string | null,"read_at"?: string,"read_by"?: string | null,"reading": number,"source"?: Database["public"]['Enums']["tach_reading_source"]
+                    "aircraft_id": string,"created_at"?: string,"flight_id"?: string | null,"id"?: string,"note"?: string | null,"note_id"?: string | null,"read_at"?: string,"read_by"?: string | null,"reading": number,"source"?: Database["public"]['Enums']["tach_reading_source"]
                   }
                   Update: {
-                    "aircraft_id"?: string,"created_at"?: string,"flight_id"?: string | null,"id"?: string,"note"?: string | null,"read_at"?: string,"read_by"?: string | null,"reading"?: number,"source"?: Database["public"]['Enums']["tach_reading_source"]
+                    "aircraft_id"?: string,"created_at"?: string,"flight_id"?: string | null,"id"?: string,"note"?: string | null,"note_id"?: string | null,"read_at"?: string,"read_by"?: string | null,"reading"?: number,"source"?: Database["public"]['Enums']["tach_reading_source"]
                   }
                   Relationships: [
                     {
@@ -616,6 +642,12 @@ isOneToOne: false
       columns: ["flight_id"]
 isOneToOne: false
       referencedRelation: "flight_running"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "tach_reading_note_id_fkey"
+      columns: ["note_id"]
+isOneToOne: false
+      referencedRelation: "aircraft_note"
       referencedColumns: ["id"]
     },{
       foreignKeyName: "tach_reading_read_by_fkey"
