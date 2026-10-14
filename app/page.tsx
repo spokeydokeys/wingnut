@@ -5,12 +5,10 @@ import { TabBar } from "@/components/tab-bar";
 import { TaskRow } from "@/components/task-row";
 import { TimerButton } from "@/components/timer-button";
 import { getLiveSnags } from "@/lib/aircraft";
-import { getNextBooking } from "@/lib/bookings";
 import { requireMember } from "@/lib/dal";
 import { getAircraft, getBalance, getRunningFlight } from "@/lib/flights";
 import { formatMoney } from "@/lib/format";
 import { getMyOpenTasks } from "@/lib/tasks";
-import { formatClock, formatDayShort } from "@/lib/time";
 import { logPastFlight } from "@/app/flight/actions";
 
 // Nothing on this page is cacheable: it shows a balance and whether the timer
@@ -21,17 +19,22 @@ export const dynamic = "force-dynamic";
  * Home. SPEC.md 3 names the one thing this screen exists for -- start the
  * timer -- so that button is 128px tall and everything else is smaller than it.
  *
- * The booking, snag and task cards appear only when there is something to say,
- * so nothing on this screen is a card that always reads the same.
+ * The snag and task cards appear only when there is something to say, so
+ * nothing on this screen is a card that always reads the same.
+ *
+ * There is no next-booking card. The wireframes had one, from when the
+ * calendar was a door behind More and this was the only place it showed. Now
+ * that Bookings is a tab, the card was a second-hand copy of the first line of
+ * a screen one tap away -- and the tap is the thing you want anyway, because
+ * the card could not be booked from.
  */
 export default async function Home() {
   const member = await requireMember();
   const [aircraft, running] = await Promise.all([getAircraft(), getRunningFlight()]);
-  const [balance, snags, tasks, next] = await Promise.all([
+  const [balance, snags, tasks] = await Promise.all([
     getBalance(member.id),
     aircraft ? getLiveSnags(aircraft.id) : Promise.resolve([]),
     getMyOpenTasks(member.id),
-    aircraft ? getNextBooking(aircraft.id, member.id) : Promise.resolve(null),
   ]);
 
   const openSnags = snags.filter((snag) => snag.status === "open").length;
@@ -127,45 +130,6 @@ export default async function Home() {
             <path d="M9 5l7 7-7 7" />
           </svg>
         </Link>
-
-        {/*
-          The wireframe's next-booking card, now that there is a table behind
-          it. Only when something is booked: a card that says "nothing booked"
-          every day is a card you stop reading.
-        */}
-        {next && (
-          <Link
-            href={`/bookings/${next.id}`}
-            className="flex flex-none items-center justify-between gap-3 rounded-[14px] border border-line bg-surface p-3.5"
-          >
-            <span className="min-w-0">
-              <span className="field-label block">Next booking</span>
-              <span className="block text-base font-semibold">
-                {formatDayShort(next.start_at)}, {formatClock(next.start_at)}–
-                {formatClock(next.end_at)}
-              </span>
-              <span className="block truncate text-[13px] text-muted">
-                {next.pilot_member_id === member.id
-                  ? (next.note ?? "Yours")
-                  : `${next.pilot?.full_name ?? "Another owner"} has the aeroplane`}
-              </span>
-            </span>
-            <svg
-              aria-hidden="true"
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="flex-none text-muted"
-            >
-              <path d="M9 5l7 7-7 7" />
-            </svg>
-          </Link>
-        )}
 
         {/*
           Snags and tasks, in that order, and only when there are any. A snag
