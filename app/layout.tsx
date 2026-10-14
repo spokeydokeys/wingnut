@@ -38,7 +38,16 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${plexSans.variable} ${plexMono.variable} h-full antialiased`}
     >
-      <body className="flex min-h-full flex-col bg-screen font-sans text-ink">
+      {/*
+        h-full, not min-h-full: the body has to be exactly the viewport so the
+        page itself never scrolls. Every screen is <header> / <main
+        flex-1 min-h-0 overflow-y-auto> / <TabBar flex-none>, and that only
+        works if the column it sits in has a fixed height to divide up. With
+        min-h-full the body grew with its content and the whole document
+        scrolled, carrying the bottom nav off the bottom of the screen -- which
+        on a phone is the one control that must always be reachable.
+      */}
+      <body className="flex h-full flex-col overflow-hidden bg-screen font-sans text-ink">
         {children}
       </body>
     </html>

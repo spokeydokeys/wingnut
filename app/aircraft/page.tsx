@@ -33,7 +33,7 @@ export default async function Aircraft() {
         <header className="flex-none px-4 pt-5 pb-1">
           <h1 className="text-[26px] font-semibold">Aircraft</h1>
         </header>
-        <main className="flex min-h-0 flex-1 flex-col px-4 pt-3">
+        <main className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-3">
           <p className="rounded-[14px] border border-line bg-surface p-4 text-[15px] text-muted">
             No aircraft has been set up yet.
           </p>

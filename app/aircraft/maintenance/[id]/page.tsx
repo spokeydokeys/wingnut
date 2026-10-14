@@ -66,7 +66,7 @@ export default async function MaintenanceItem({
         }
       />
 
-      <main className="flex min-h-0 flex-1 flex-col px-4 pt-3.5 pb-4">
+      <main className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-3.5 pb-4">
         <div className="mb-3.5 flex flex-none rounded-xl border border-line bg-surface px-3.5 py-3">
           <div className="flex-1">
             <div className="field-label">Last done</div>

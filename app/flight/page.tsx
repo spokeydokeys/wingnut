@@ -59,7 +59,7 @@ export default async function FlightTimer() {
         <Chip tone="running">Running</Chip>
       </header>
 
-      <main className="flex min-h-0 flex-1 flex-col gap-3 px-4 pt-2 pb-4">
+      <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pt-2 pb-4">
         <Elapsed
           startAt={running.start_at}
           serverNow={new Date().toISOString()}

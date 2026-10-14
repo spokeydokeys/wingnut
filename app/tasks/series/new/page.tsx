@@ -26,7 +26,7 @@ export default async function NewTaskSeries() {
     <>
       <BackHeader href="/tasks" label="Tasks" title="Recurring chore" />
 
-      <main className="flex min-h-0 flex-1 flex-col px-4 pt-3.5 pb-4">
+      <main className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-3.5 pb-4">
         <ActionForm action={createTaskSeries} submitLabel="Add chore">
           <div>
             <label htmlFor="title" className="field-label mb-1.5 block">

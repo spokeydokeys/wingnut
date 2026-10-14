@@ -40,7 +40,7 @@ export default async function LogTach() {
         subtitle="What the hour meter actually says. Everything on the maintenance list is measured from this."
       />
 
-      <main className="flex min-h-0 flex-1 flex-col px-4 pt-3.5 pb-4">
+      <main className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-3.5 pb-4">
         <div className="mb-3.5 flex flex-none rounded-xl border border-ink bg-surface px-3.5 py-3">
           <div className="flex-1">
             <div className="field-label">Estimated now</div>

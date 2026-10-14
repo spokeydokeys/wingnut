@@ -57,7 +57,7 @@ export default async function SetFlightPlace({
         title={landed ? "Where did you land?" : "Where did you take off?"}
       />
 
-      <main className="flex min-h-0 flex-1 flex-col gap-2.5 px-4 pt-3 pb-4">
+      <main className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 pt-3 pb-4">
         <PlacePicker
           flightId={flight.id}
           which={which}

@@ -31,7 +31,7 @@ export default async function NewSnag() {
         subtitle="Anything you noticed. Small things are worth writing down too."
       />
 
-      <main className="flex min-h-0 flex-1 flex-col px-4 pt-3.5 pb-4">
+      <main className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-3.5 pb-4">
         <ActionForm action={addSnag} submitLabel="Report snag">
           <div>
             <label htmlFor="title" className="field-label mb-1.5 block">

@@ -39,7 +39,7 @@ export default async function RecordPayment() {
         subtitle="What arrived, from whom, on the day the bank says."
       />
 
-      <main className="flex min-h-0 flex-1 flex-col px-4 pt-3.5 pb-4">
+      <main className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-3.5 pb-4">
         <ActionForm action={recordPayment} submitLabel="Record payment">
           <div>
             <label htmlFor="member_id" className="field-label mb-1.5 block">

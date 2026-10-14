@@ -43,7 +43,7 @@ export default async function Pay() {
         subtitle="Send it from your own banking app. An admin records it against your ledger once it arrives."
       />
 
-      <main className="flex min-h-0 flex-1 flex-col gap-3 px-4 pt-3.5 pb-4">
+      <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pt-3.5 pb-4">
         <div className="flex-none rounded-[14px] border border-ink bg-surface px-3.5 py-3">
           <div className="field-label">Amount</div>
           <div className="numeric text-[40px] leading-[1.15]">

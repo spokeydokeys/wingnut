@@ -47,7 +47,7 @@ export default async function TaskDetail({ params }: PageProps<"/tasks/[id]">) {
     <>
       <BackHeader href="/tasks" label="Tasks" title={task.title} subtitle={subtitle} />
 
-      <main className="flex min-h-0 flex-1 flex-col gap-3 px-4 pt-3.5 pb-4">
+      <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pt-3.5 pb-4">
         {task.detail && (
           <p className="flex-none rounded-[14px] border border-line bg-surface px-3.5 py-3 text-[15px]">
             {task.detail}
