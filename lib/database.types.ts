@@ -3,7 +3,25 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 
 export type Database = {
   
-  "public": {
+  "graphql_public": {
+          Tables: {
+            [_ in never]: never
+          }
+          Views: {
+            [_ in never]: never
+          }
+          Functions: {
+            "graphql":
+{ Args: { "extensions"?: Json,"operationName"?: string,"query"?: string,"variables"?: Json }; Returns: Json
+                           }
+          }
+          Enums: {
+            [_ in never]: never
+          }
+          CompositeTypes: {
+            [_ in never]: never
+          }
+        },"public": {
           Tables: {
             "aircraft": {
                   Row: {
@@ -956,6 +974,9 @@ isOneToOne: false
 "receipt_is_locked":
 { Args: { "p_object_key": string }; Returns: boolean
                            },
+"record_ownership_period":
+{ Args: { "p_aircraft_id": string,"p_effective_from": string,"p_member_ids": (string)[],"p_note": string,"p_shares": (number)[] }; Returns: string
+                           },
 "record_payment":
 { Args: { "p_amount": number,"p_member_id": string,"p_note"?: string,"p_paid_on": string }; Returns: string
                            },
@@ -1160,7 +1181,11 @@ export type CompositeTypes<
   : never
 
 export const Constants = {
-  "public": {
+  "graphql_public": {
+          Enums: {
+            
+          }
+        },"public": {
           Enums: {
             "billing_basis": ["flight_time", "tach"],"expense_approval_rule": ["any_other_owner", "admin_only"],"expense_charge_to": ["pool", "reserve"],"expense_payer": ["company", "member"],"expense_status": ["recorded", "submitted", "approved", "rejected"],"fix_source": ["gps", "manual"],"fix_which": ["start", "end"],"fixed_cost_split": ["ownership_shares", "equal", "hours_flown"],"flight_status": ["draft", "confirmed", "billed"],"gl_account_type": ["asset", "liability", "equity", "revenue", "expense"],"hour_rounding": ["round_up_tenth", "nearest_tenth", "exact"],"invoice_status": ["draft", "issued", "settled", "void"],"ledger_entry_kind": ["flight_charge", "hangarage", "insurance", "expense_credit", "payment", "payout", "adjustment"],"maintenance_basis": ["tach", "calendar"],"maintenance_kind": ["life_limit", "recurring_inspection", "recurring_task"],"member_role": ["pilot", "admin"],"place_kind": ["airport", "water_aerodrome", "heliport", "bay", "lake", "dock", "other"],"place_source": ["ourairports", "osm", "bcgnis", "saved"],"rate_component_kind": ["fuel", "reserve", "operating"],"snag_status": ["open", "watch", "cleared"],"tach_reading_source": ["manual", "flight"],"task_recurrence": ["month_close", "interval_days"],"task_status": ["open", "done", "cancelled"],"tax_treatment": ["taxable", "zero_rated", "exempt", "out_of_scope"]
           }

@@ -4544,5 +4544,123 @@ begin
 end $$;
 rollback;
 
+-- ===========================================================================
+-- 59. `record_ownership_period` writes a split and refuses a bad one.
+--
+--     What is NOT asserted here, deliberately: that a refusal leaves no empty
+--     period behind. That is the reason the function exists -- one PostgREST
+--     request is one transaction, where two would let a failure between them
+--     strand a period with no shares in it, which `ownership_as_of` would then
+--     pick as the newest and quietly zero everybody's fixed_cost_share. But it
+--     is a property of the transaction, not of the function, and a test for it
+--     passes whatever the function does: plpgsql rolls each statement back to
+--     its own savepoint, so the `exception when others` below undoes the
+--     insert by itself. It was written, it survived a mutation that moved the
+--     check after the insert, and it was removed.
+--
+--     What is left is what can fail. A bad total is refused BEFORE commit,
+--     with both numbers in the message -- the deferred constraint trigger
+--     would catch it eventually, but only at commit and only in SQL nobody
+--     reads. Proved by removing the check: the call then succeeds.
+--
+--     And the pilot. The function is security INVOKER on purpose, so a pilot
+--     has to be refused by `ownership_period_admin_write` rather than by a
+--     role check inside it. Proved by making it security definer: the pilot
+--     gets through.
+--
+--     The expected total is read off the company rather than written as 1200,
+--     so this does not quietly become an assertion about the seed.
+-- ===========================================================================
+begin;
+
+insert into public.member (id, auth_user_id, full_name, email, role) values
+  ('00000000-0000-0000-0000-00000000a059',
+   '00000000-0000-0000-0000-0000000a0059',
+   'Test Ownership Admin', 'ownadmin@example.test', 'admin'),
+  ('00000000-0000-0000-0000-00000000a060',
+   '00000000-0000-0000-0000-0000000a0060',
+   'Test Ownership Pilot', 'ownpilot@example.test', 'pilot');
+
+do $$
+declare
+  v_air     uuid := '00000000-0000-0000-0000-0000000ac001';
+  v_one     uuid := '00000000-0000-0000-0000-00000000a001';
+  v_two     uuid := '00000000-0000-0000-0000-00000000a002';
+  v_total   integer;
+  v_period  uuid;
+  v_shares  integer;
+  v_refused boolean := false;
+  v_msg     text;
+begin
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+                     '{"sub":"00000000-0000-0000-0000-0000000a0059"}', true);
+
+  select c.total_shares into v_total
+  from public.company c
+  join public.aircraft a on a.company_id = c.id
+  where a.id = v_air;
+
+  if coalesce(v_total, 0) < 2 then
+    raise exception 'FAIL  no company share count to divide up';
+  end if;
+
+  -- A balanced split writes the period AND the holdings under it.
+  v_period := public.record_ownership_period(
+    v_air, date '2027-03-01', '  Test split  ',
+    array[v_one, v_two], array[v_total - 500, 500]);
+
+  select s.shares into v_shares
+  from public.ownership_share s
+  where s.period_id = v_period and s.member_id = v_one;
+
+  if v_shares is distinct from v_total - 500 then
+    raise exception 'FAIL  the holding recorded was %, not %', v_shares, v_total - 500;
+  end if;
+
+  -- Trimmed and emptied to null, so a note left blank does not become a line
+  -- of whitespace under the date on the Ownership screen.
+  if (select p.note from public.ownership_period p where p.id = v_period)
+     is distinct from 'Test split' then
+    raise exception 'FAIL  the note was stored untrimmed';
+  end if;
+
+  -- A total that does not add up is refused, with both numbers in the message.
+  begin
+    perform public.record_ownership_period(
+      v_air, date '2027-04-01', null,
+      array[v_one, v_two], array[v_total - 500, 600]);
+  exception when others then
+    v_refused := true; v_msg := sqlerrm;
+  end;
+
+  if not v_refused then
+    raise exception 'FAIL  a split that oversubscribed the company was recorded';
+  end if;
+  if position(format('must be %s', v_total) in coalesce(v_msg, '')) = 0 then
+    raise exception 'FAIL  refused by "%", not the share total', v_msg;
+  end if;
+
+  -- A pilot may not record one at all.
+  perform set_config('request.jwt.claims',
+                     '{"sub":"00000000-0000-0000-0000-0000000a0060"}', true);
+  v_refused := false;
+  begin
+    perform public.record_ownership_period(
+      v_air, date '2027-05-01', null,
+      array[v_one, v_two], array[v_total - 500, 500]);
+  exception when others then
+    v_refused := true;
+  end;
+
+  if not v_refused then
+    raise exception 'FAIL  a pilot recorded an ownership split';
+  end if;
+
+  perform set_config('role', 'postgres', true);
+  raise notice 'PASS  a split is written by an admin, and refused if it does not add up';
+end $$;
+rollback;
+
 \echo ''
 \echo 'All core schema checks passed.'

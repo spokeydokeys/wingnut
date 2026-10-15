@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { BackHeader } from "@/components/back-header";
 import { Chip } from "@/components/chip";
 import { requireAdmin } from "@/lib/dal";
@@ -42,6 +44,14 @@ export default async function Ownership() {
         label="More"
         title="Ownership"
         subtitle="Who holds what, and since when. Fixed costs are split by this."
+        action={
+          <Link
+            href="/more/ownership/new"
+            className="flex h-11 items-center rounded-[10px] border-[1.5px] border-ink bg-surface px-4 text-[15px] font-semibold"
+          >
+            + Split
+          </Link>
+        }
       />
 
       <main className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 pt-3.5 pb-4">

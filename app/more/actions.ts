@@ -148,3 +148,77 @@ export async function addPerson(
   revalidatePath("/", "layout");
   redirect("/more/people");
 }
+
+/**
+ * Record a new ownership split, effective from a date.
+ *
+ * There is no edit and no delete to go with this. `fixed_cost_share` resolves
+ * ownership as of the first of each month, so changing a period that has been
+ * billed changes what a closed month should have charged -- which SPEC.md 4.6
+ * forbids. A correction is a new period, dated when the correction takes
+ * effect, and the old one stays as the record of what was actually invoiced.
+ *
+ * `record_ownership_period` does both inserts in one transaction and is the
+ * only reason this is an RPC rather than two `.insert()` calls; see the
+ * migration for what a half-written period would do to the billing.
+ */
+export async function addOwnershipPeriod(
+  _prev: Failed | null,
+  form: FormData,
+): Promise<Failed | never> {
+  await requireAdmin();
+
+  const aircraftId = String(form.get("aircraft_id") ?? "");
+  const effectiveFrom = String(form.get("effective_from") ?? "");
+  if (!UUID.test(aircraftId)) return { error: "That aeroplane could not be read." };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom)) {
+    return { error: "Give the date this split starts from." };
+  }
+
+  // One `shares.<member id>` field per person the form offered. Reading them
+  // back off the form rather than re-querying the roster means the split that
+  // is saved is the one that was on the screen, even if somebody was retired
+  // in between.
+  const memberIds: string[] = [];
+  const shares: number[] = [];
+  for (const [key, value] of form.entries()) {
+    if (!key.startsWith("shares.")) continue;
+
+    const memberId = key.slice("shares.".length);
+    const held = Number(String(value).trim());
+    if (!UUID.test(memberId)) return { error: "That person could not be read." };
+    if (!Number.isInteger(held) || held < 0) {
+      return { error: "Holdings are whole shares, and cannot be negative." };
+    }
+
+    memberIds.push(memberId);
+    shares.push(held);
+  }
+
+  if (memberIds.length === 0) return { error: "Nobody was given a holding." };
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("record_ownership_period", {
+    p_aircraft_id: aircraftId,
+    p_effective_from: effectiveFrom,
+    p_note: String(form.get("note") ?? ""),
+    p_member_ids: memberIds,
+    p_shares: shares,
+  });
+
+  if (error) {
+    // The form cannot offer the same person twice, so the only unique index
+    // this can land on is (aircraft_id, effective_from).
+    if (error.code === "23505") {
+      return { error: "A split already starts on that date. Pick another, or change that one's successor." };
+    }
+    // Every other refusal here is the function's own, and those are written to
+    // be read: "ownership shares sum to 1150, must be 1200" says the number
+    // that was typed and the number it had to be, which is the whole of the
+    // advice. Rewording it here would only lose the arithmetic.
+    return { error: error.message };
+  }
+
+  revalidatePath("/", "layout");
+  redirect("/more/ownership");
+}

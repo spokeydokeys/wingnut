@@ -1574,5 +1574,105 @@ end $$;
 rollback;
 SQL
 
+# Two things a dump can lose without the data looking any different: the
+# function the Ownership screen writes through, and the CONSTRAINT trigger
+# underneath it. Lose either and a split that does not add up gets recorded,
+# which is how one owner ends up paying a share of the hangarage that nobody
+# else is paying the rest of.
+#
+# RLS is not in the way here -- this runs as the table owner, so the policies
+# step aside. Who may record a split is checked in verify-rls.sql, where there
+# is a signed-in pilot to refuse.
+echo "==> Checking that an ownership split still has to add up"
+psql_in <<'SQL'
+begin;
+
+do $$
+declare
+  v_air    uuid;
+  v_total  integer;
+  v_one    uuid;
+  v_two    uuid;
+  v_period uuid;
+  v_orphan uuid;
+  v_count  int;
+  v_msg    text;
+begin
+  select a.id, c.total_shares into v_air, v_total
+  from public.aircraft a
+  join public.company c on c.id = a.company_id
+  order by a.created_at
+  limit 1;
+
+  if v_air is null or coalesce(v_total, 0) < 2 then
+    raise exception 'SETUP  no aeroplane with a share count in the restored database';
+  end if;
+
+  select id into v_one from public.member order by full_name limit 1;
+  select id into v_two from public.member order by full_name offset 1 limit 1;
+  if v_two is null then
+    raise exception 'SETUP  the restored roster has fewer than two people';
+  end if;
+
+  -- Dated far enough out that it cannot be mistaken for, or collide with, a
+  -- real period in whatever was dumped.
+  v_period := public.record_ownership_period(
+    v_air, date '2031-07-01', '  Restore split  ',
+    array[v_one, v_two], array[v_total - 100, 100]);
+
+  select count(*) into v_count
+  from public.ownership_share where period_id = v_period;
+  if v_count <> 2 then
+    raise exception 'FAIL  the restored split recorded % holdings, not 2', v_count;
+  end if;
+
+  if (select p.note from public.ownership_period p where p.id = v_period)
+     is distinct from 'Restore split' then
+    raise exception 'FAIL  the note was stored untrimmed after restore';
+  end if;
+
+  begin
+    perform public.record_ownership_period(
+      v_air, date '2031-08-01', null,
+      array[v_one, v_two], array[v_total, 100]);
+    v_msg := null;
+  exception when others then v_msg := sqlerrm;
+  end;
+
+  if v_msg is null then
+    raise exception 'FAIL  the restored database recorded a split that does not add up';
+  end if;
+  if position(format('must be %s', v_total) in v_msg) = 0 then
+    raise exception 'FAIL  refused by "%", not the share total', v_msg;
+  end if;
+
+  -- And the backstop under the function: writing the two tables directly, the
+  -- way PostgREST exposes them, must still be caught. Forced immediate because
+  -- the trigger is deferred to a commit this transaction is never going to
+  -- reach -- without this the check would be skipped and the section would
+  -- pass whether the trigger survived the dump or not.
+  begin
+    insert into public.ownership_period (aircraft_id, effective_from)
+    values (v_air, date '2031-09-01')
+    returning id into v_orphan;
+
+    insert into public.ownership_share (period_id, member_id, shares)
+    values (v_orphan, v_one, v_total - 1);
+
+    set constraints all immediate;
+    v_msg := null;
+  exception when others then v_msg := sqlerrm;
+  end;
+
+  if v_msg is null then
+    raise exception 'FAIL  the restored database kept a period one share short';
+  end if;
+
+  raise notice 'PASS  an ownership split still has to add up, on vanilla Postgres';
+end $$;
+
+rollback;
+SQL
+
 echo
 echo "Escape hatch verified: the export restores and runs on vanilla PostgreSQL."
