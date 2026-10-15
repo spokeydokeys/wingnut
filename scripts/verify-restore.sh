@@ -1498,5 +1498,81 @@ begin
 end $$;
 SQL
 
+# A STATEMENT-level trigger, which is the kind a dump is most likely to leave
+# behind: nothing references it, no column mentions it, and the roster restores
+# looking perfect without it. What is lost is the one rule standing between an
+# admin and locking every owner out of their own aeroplane, and it would not be
+# noticed until the day somebody pressed the button.
+echo "==> Checking that the roster still keeps an admin"
+psql_in <<'SQL'
+begin;
+
+-- There is no auth.uid() in a restored database, so is_admin() is false and
+-- member_guard_privileged_columns refuses every one of these changes before
+-- the rule under test gets a say -- which would make this section pass without
+-- proving anything. That guard is checked in verify-rls.sql, where there is a
+-- signed-in admin to check it against. Standing it down here is DDL, so the
+-- rollback at the end puts it back along with the rest.
+alter table public.member disable trigger member_guard_privileged_columns;
+
+do $$
+declare
+  v_solo    uuid;
+  v_blocked text;
+  v_role    text;
+  v_admins  int;
+begin
+  -- A member of this restored roster, not a seeded id: the point is the rule,
+  -- and the rule has to hold for whoever is actually in the dump.
+  insert into public.member (full_name, email, role)
+  values ('Restore Guard Admin', 'restoreguard@example.test', 'admin')
+  returning id into v_solo;
+
+  -- Make this the only active admin, so the next change is the last-admin case.
+  update public.member set role = 'pilot'
+   where role = 'admin' and id <> v_solo;
+
+  select count(*) into v_admins
+  from public.member where is_active and role = 'admin';
+  if v_admins <> 1 then
+    raise exception 'SETUP  expected one admin after restore, found %', v_admins;
+  end if;
+
+  begin
+    update public.member set role = 'pilot' where id = v_solo;
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  the restored roster let its last admin step down';
+  end if;
+
+  begin
+    update public.member set is_active = false where id = v_solo;
+    v_blocked := null;
+  exception when others then v_blocked := sqlerrm;
+  end;
+  if v_blocked is null then
+    raise exception 'FAIL  the restored roster let its last admin be retired';
+  end if;
+
+  -- And the rule is the last-admin one, not a blanket refusal: with somebody
+  -- else promoted, the same demotion goes through.
+  update public.member set role = 'admin'
+   where id = (select id from public.member
+                where is_active and id <> v_solo order by full_name limit 1);
+  update public.member set role = 'pilot' where id = v_solo;
+
+  select m.role::text into v_role from public.member m where m.id = v_solo;
+  if v_role <> 'pilot' then
+    raise exception 'FAIL  a handover was refused on the restored roster';
+  end if;
+
+  raise notice 'PASS  the roster keeps an admin, and a handover still works, on vanilla Postgres';
+end $$;
+
+rollback;
+SQL
+
 echo
 echo "Escape hatch verified: the export restores and runs on vanilla PostgreSQL."

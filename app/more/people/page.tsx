@@ -1,7 +1,9 @@
 import Link from "next/link";
 
+import { setActive, setRole } from "@/app/more/actions";
 import { BackHeader } from "@/components/back-header";
 import { Chip } from "@/components/chip";
+import { InlineAction } from "@/components/inline-action";
 import { requireAdmin } from "@/lib/dal";
 import { getPeople } from "@/lib/people";
 
@@ -18,6 +20,12 @@ export const dynamic = "force-dynamic";
  * There is no delete. A member is referenced by every flight, invoice and
  * receipt behind them and `ownership_share.member_id` is `on delete restrict`,
  * so the only honest end for somebody who leaves is to stop being active.
+ *
+ * The one button deliberately missing is Retire on your own row. Demoting
+ * yourself is a handover and is offered; deactivating yourself is a locked
+ * door, because an inactive member fails `current_member_id()` and lands on
+ * /no-access with no way back in. Another admin can still do it to you, which
+ * is the case where somebody is actually leaving.
  */
 export default async function People() {
   const me = await requireAdmin();
@@ -79,6 +87,30 @@ export default async function People() {
                   : "Has not signed in yet. Sending them the sign-in link finishes it."}
               </p>
             )}
+
+            <div className="mt-2.5 flex flex-wrap items-start gap-2">
+              <InlineAction
+                action={setRole}
+                tone="outline"
+                label={person.role === "admin" ? "Make a pilot" : "Make an admin"}
+                fields={{
+                  id: person.id,
+                  role: person.role === "admin" ? "pilot" : "admin",
+                }}
+              />
+
+              {person.id !== me.id && (
+                <InlineAction
+                  action={setActive}
+                  tone="outline"
+                  label={person.is_active ? "Retire" : "Bring back"}
+                  fields={{
+                    id: person.id,
+                    is_active: person.is_active ? "false" : "true",
+                  }}
+                />
+              )}
+            </div>
           </div>
         ))}
       </main>

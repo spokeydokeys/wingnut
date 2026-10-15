@@ -4435,5 +4435,114 @@ begin
 end $$;
 rollback;
 
+-- ===========================================================================
+-- 58. The roster always keeps an active admin. The People screen hands an
+--     admin the two buttons that can lock everybody out -- demote the last
+--     admin, or retire them -- and there is no way back from inside the app,
+--     because only an admin may hand out admin.
+--
+--     `member_keeps_an_admin` is the whole of it; the Server Action only
+--     translates the refusal into English. So this is checked as an
+--     authenticated admin, which is the path PostgREST offers, not as
+--     postgres.
+--
+--     The refusal is matched on its message. Without that, RLS or
+--     `member_guard_privileged_columns` refusing for an unrelated reason
+--     would look exactly like the guard working.
+--
+--     The last third of this test is the point of it: after promoting
+--     somebody else, the same demotion must be ALLOWED. A guard that simply
+--     forbade self-demotion would pass the first two thirds and would quietly
+--     make a handover impossible.
+-- ===========================================================================
+begin;
+
+insert into public.member (id, auth_user_id, full_name, email, role)
+values ('00000000-0000-0000-0000-00000000a058',
+        '00000000-0000-0000-0000-0000000a0058',
+        'Test Admin Guard', 'guardadmin@example.test', 'admin');
+
+do $$
+declare
+  v_me      uuid := '00000000-0000-0000-0000-00000000a058';
+  v_other   uuid := '00000000-0000-0000-0000-00000000a001';
+  v_refused boolean;
+  v_msg     text;
+  v_admins  int;
+  v_role    public.member_role;
+  v_active  boolean;
+begin
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claims',
+                     '{"sub":"00000000-0000-0000-0000-0000000a0058"}', true);
+
+  -- Leave exactly one active admin: me.
+  update public.member set role = 'pilot' where role = 'admin' and id <> v_me;
+
+  select count(*) into v_admins
+  from public.member where is_active and role = 'admin';
+  if v_admins <> 1 then
+    raise exception 'SETUP  expected one admin before the test, found %', v_admins;
+  end if;
+
+  -- The last admin cannot demote themselves.
+  v_refused := false;
+  begin
+    update public.member set role = 'pilot' where id = v_me;
+  exception when others then
+    v_refused := true; v_msg := sqlerrm;
+  end;
+  if not v_refused then
+    raise exception 'FAIL  the last admin demoted themselves';
+  end if;
+  if position('at least one active admin' in coalesce(v_msg, '')) = 0 then
+    raise exception 'FAIL  refused by "%", which is not the last-admin guard', v_msg;
+  end if;
+
+  select role into v_role from public.member where id = v_me;
+  if v_role <> 'admin' then
+    raise exception 'FAIL  the refused demotion took effect anyway';
+  end if;
+
+  -- Nor retire themselves, which locks the door by the other handle.
+  v_refused := false;
+  begin
+    update public.member set is_active = false where id = v_me;
+  exception when others then
+    v_refused := true; v_msg := sqlerrm;
+  end;
+  if not v_refused then
+    raise exception 'FAIL  the last admin retired themselves';
+  end if;
+  if position('at least one active admin' in coalesce(v_msg, '')) = 0 then
+    raise exception 'FAIL  retiring refused by "%", not the last-admin guard', v_msg;
+  end if;
+
+  select is_active into v_active from public.member where id = v_me;
+  if not v_active then
+    raise exception 'FAIL  the refused retirement took effect anyway';
+  end if;
+
+  -- Hand over properly: promote somebody first, and the same demotion goes
+  -- through. This is what stops the guard from being "never demote yourself".
+  update public.member set role = 'admin' where id = v_other;
+  update public.member set role = 'pilot' where id = v_me;
+
+  select role into v_role from public.member where id = v_me;
+  if v_role <> 'pilot' then
+    raise exception 'FAIL  a handover was refused with another admin in place';
+  end if;
+
+  select count(*) into v_admins
+  from public.member where is_active and role = 'admin';
+  if v_admins <> 1 then
+    raise exception 'FAIL  expected one admin after the handover, found %', v_admins;
+  end if;
+
+  perform set_config('role', 'postgres', true);
+  raise notice 'PASS  the roster keeps an admin, and a handover still works';
+end $$;
+rollback;
+
 \echo ''
 \echo 'All core schema checks passed.'

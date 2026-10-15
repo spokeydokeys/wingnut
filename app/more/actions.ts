@@ -17,6 +17,87 @@ import { createClient } from "@/lib/supabase/server";
 
 type Failed = { error: string };
 
+const UUID = /^[0-9a-f-]{36}$/i;
+
+/**
+ * Change one of the two columns an admin may change about somebody else.
+ *
+ * Both buttons on the People screen are the same write with a different patch,
+ * and both can be refused by the same two rules, so they share this rather
+ * than each carrying its own copy of what a refusal means.
+ *
+ * `member_keeps_an_admin` raises P0001 when the change would empty the roster
+ * of active admins. Its message is accurate but is written for whoever reads
+ * the logs; the person holding the phone gets told what to do instead.
+ */
+async function patchMember(
+  id: string,
+  patch: { role: "pilot" | "admin" } | { is_active: boolean },
+): Promise<Failed | null> {
+  await requireAdmin();
+  if (!UUID.test(id)) return { error: "That person could not be read." };
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("member")
+    .update(patch)
+    .eq("id", id)
+    .select("id")
+    .maybeSingle();
+
+  if (error) {
+    return {
+      error: error.code === "P0001"
+        ? "Somebody has to be an admin. Make another person an admin first."
+        : error.message,
+    };
+  }
+  // member_admin_write refuses by matching no rows rather than by raising, so
+  // an empty result is the refusal -- which here means the admin doing this
+  // stopped being one between the screen rendering and the button being hit.
+  if (!data) return { error: "That change was refused." };
+
+  revalidatePath("/", "layout");
+  return null;
+}
+
+/**
+ * Give or take away admin.
+ *
+ * Nothing here checks who is being changed. An admin may demote themselves --
+ * that is how a handover ends -- and the only change that is actually
+ * impossible is the one that leaves nobody able to do this again, which the
+ * database refuses whoever asks.
+ */
+export async function setRole(
+  _prev: Failed | null,
+  form: FormData,
+): Promise<Failed | null> {
+  const role = String(form.get("role") ?? "");
+  if (role !== "pilot" && role !== "admin") {
+    return { error: "That role could not be read." };
+  }
+
+  return patchMember(String(form.get("id") ?? ""), { role });
+}
+
+/**
+ * Retire somebody, or bring them back.
+ *
+ * This is the nearest thing to a delete the roster has, and it is not one:
+ * every flight, invoice and receipt behind them stays exactly where it is, and
+ * `ownership_share.member_id` is `on delete restrict` precisely so that a real
+ * delete cannot quietly take a month's billing with it.
+ */
+export async function setActive(
+  _prev: Failed | null,
+  form: FormData,
+): Promise<Failed | null> {
+  return patchMember(String(form.get("id") ?? ""), {
+    is_active: String(form.get("is_active") ?? "") === "true",
+  });
+}
+
 /**
  * Put somebody on the roster.
  *
