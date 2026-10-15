@@ -20,10 +20,18 @@ export function ActionForm({
   action,
   submitLabel,
   children,
+  footer,
 }: {
   action: (prev: Failed, form: FormData) => Promise<Failed>;
   submitLabel: string;
   children: ReactNode;
+  /**
+   * Rendered under the submit button. For the way out of a screen whose only
+   * purpose is to be agreed to -- it has to be next to the thing it is an
+   * alternative to, and the submit button is pinned to the bottom, so there is
+   * nowhere else for it to go.
+   */
+  footer?: ReactNode;
 }) {
   const [state, formAction, pending] = useActionState(action, null);
 
@@ -106,6 +114,8 @@ export function ActionForm({
       >
         {pending ? "Saving…" : submitLabel}
       </button>
+
+      {footer}
     </form>
   );
 }

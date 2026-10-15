@@ -99,6 +99,33 @@ export async function setActive(
 }
 
 /**
+ * Give up your own admin.
+ *
+ * `setRole` could do this -- it does not care whose row it is -- but then the
+ * confirmation screen would be a courtesy that a crafted form could skip. This
+ * takes no id at all: the row it writes is whoever is holding the phone, so
+ * there is nothing to tamper with.
+ *
+ * `member_keeps_an_admin` still has the last word. An admin who is the only one
+ * left reaches this screen, reads it, presses the button and is told no, which
+ * is the right order: the rule that cannot be argued with is in the database,
+ * and the screen is only there so nobody arrives at it by accident.
+ */
+export async function stepDownAsAdmin(
+  _prev: Failed | null,
+  _form: FormData,
+): Promise<Failed | never> {
+  const me = await requireAdmin();
+
+  const failed = await patchMember(me.id, { role: "pilot" });
+  if (failed) return failed;
+
+  // Not back to People: a pilot who lands there sees a list with every button
+  // refusing them. Home is what they have just become.
+  redirect("/");
+}
+
+/**
  * Put somebody on the roster.
  *
  * No password, no invitation code and no auth user: `auth_user_id` stays null

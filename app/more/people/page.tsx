@@ -26,6 +26,11 @@ export const dynamic = "force-dynamic";
  * door, because an inactive member fails `current_member_id()` and lands on
  * /no-access with no way back in. Another admin can still do it to you, which
  * is the case where somebody is actually leaving.
+ *
+ * Demoting yourself is offered, but not on the press: it is the only change
+ * here you cannot reverse yourself afterwards, so it goes through
+ * /more/people/step-down. Every other button on this screen is undone by the
+ * button that replaces it, which is confirmation enough.
  */
 export default async function People() {
   const me = await requireAdmin();
@@ -89,15 +94,30 @@ export default async function People() {
             )}
 
             <div className="mt-2.5 flex flex-wrap items-start gap-2">
-              <InlineAction
-                action={setRole}
-                tone="outline"
-                label={person.role === "admin" ? "Make a pilot" : "Make an admin"}
-                fields={{
-                  id: person.id,
-                  role: person.role === "admin" ? "pilot" : "admin",
-                }}
-              />
+              {/*
+                Giving up your own admin is the one change on this screen you
+                cannot undo yourself, so it is the one that does not happen on
+                the press. It reads like the button beside it and goes to a
+                screen that says what is lost and who can give it back.
+              */}
+              {person.id === me.id && person.role === "admin" ? (
+                <Link
+                  href="/more/people/step-down"
+                  className="flex h-11 items-center justify-center rounded-[10px] border-[1.5px] border-ink bg-surface px-4 text-[15px] font-semibold"
+                >
+                  Make a pilot
+                </Link>
+              ) : (
+                <InlineAction
+                  action={setRole}
+                  tone="outline"
+                  label={person.role === "admin" ? "Make a pilot" : "Make an admin"}
+                  fields={{
+                    id: person.id,
+                    role: person.role === "admin" ? "pilot" : "admin",
+                  }}
+                />
+              )}
 
               {person.id !== me.id && (
                 <InlineAction
