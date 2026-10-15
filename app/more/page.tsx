@@ -113,6 +113,33 @@ export default async function More() {
           </Link>
         )}
 
+        {member.role === "admin" && (
+          <Link
+            href="/more/ownership"
+            className="flex items-center justify-between rounded-[14px] border border-line bg-surface p-3.5"
+          >
+            <span>
+              <span className="block text-base font-semibold">Ownership</span>
+              <span className="block text-[13px] text-muted">
+                Who holds what, and since when. Fixed costs are split by this
+              </span>
+            </span>
+            <svg
+              aria-hidden="true"
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M9 5l7 7-7 7" />
+            </svg>
+          </Link>
+        )}
+
         <Link
           href="/more/places"
           className="flex items-center justify-between rounded-[14px] border border-line bg-surface p-3.5"
@@ -139,8 +166,8 @@ export default async function More() {
         </Link>
 
         <p className="rounded-[14px] border border-line bg-surface p-3.5 text-[15px] text-muted">
-          Reserves, ownership shares and the iOS Shortcut token will appear here
-          as those phases land.
+          Reserves and the iOS Shortcut token will appear here as those phases
+          land.
         </p>
 
         <form action={signOut}>
